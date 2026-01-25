@@ -8,7 +8,7 @@ from app.api.routes.v1.utils import (
 )
 from app.db.postgres import PostgresExecutor
 from app.db.helpers import apply_pagination, resolve_metric_id
-from app.db.schema import MetricDefinition, MetricObservation
+from app.db.schema import MetricDefinition, MetricObservation, MetricSeries
 from app.db.session import get_connection
 
 router = APIRouter(prefix="/v1/metrics", tags=["metrics"])
@@ -66,9 +66,12 @@ async def get_metric_availability(
     stmt = select(
         func.min(MetricObservation.time_start_ts).label("min_time_start_ts"),
         func.max(MetricObservation.time_start_ts).label("max_time_start_ts"),
+    ).join(
+        MetricSeries,
+        MetricSeries.series_id == MetricObservation.series_id,
     ).where(
-        MetricObservation.metric_id == metric_id,
-        MetricObservation.grain == grain,
+        MetricSeries.metric_id == metric_id,
+        MetricSeries.grain == grain,
     )
 
     stmt = await apply_dimension_pairs(stmt, connection, filters, "availability")
@@ -96,9 +99,12 @@ async def get_metric_freshness(
     stmt = select(
         MetricObservation.time_start_ts.label("latest_time_start_ts"),
         MetricObservation.ingested_ts.label("latest_ingested_ts"),
+    ).join(
+        MetricSeries,
+        MetricSeries.series_id == MetricObservation.series_id,
     ).where(
-        MetricObservation.metric_id == metric_id,
-        MetricObservation.grain == grain,
+        MetricSeries.metric_id == metric_id,
+        MetricSeries.grain == grain,
     )
 
     stmt = await apply_dimension_pairs(stmt, connection, filters, "freshness")

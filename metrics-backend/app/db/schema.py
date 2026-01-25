@@ -34,7 +34,7 @@ class MetricDefinition(Base):
     unit = Column(String(32))
     directionality = Column(String(16))
     aggregation = Column(String(16), nullable=False)
-    is_active = Column(Boolean, nullable=False)
+    is_active = Column(Boolean, nullable=False, server_default="true")
     created_ts = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_ts = Column(
         DateTime(timezone=True),
@@ -43,7 +43,7 @@ class MetricDefinition(Base):
         onupdate=func.now(),
     )
 
-    observations = relationship("MetricObservation", back_populates="metric")
+    series = relationship("MetricSeries", back_populates="metric")
 
 
 class DimensionDefinition(Base):
@@ -53,8 +53,8 @@ class DimensionDefinition(Base):
     dimension_key = Column(String(128), nullable=False)
     dimension_name = Column(String(256), nullable=False)
     dimension_description = Column(String(2048))
-    value_type = Column(String(16), nullable=False)
-    is_active = Column(Boolean, nullable=False)
+    value_type = Column(String(16), nullable=False, server_default="string")
+    is_active = Column(Boolean, nullable=False, server_default="true")
     created_ts = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_ts = Column(
         DateTime(timezone=True),
@@ -63,47 +63,92 @@ class DimensionDefinition(Base):
         onupdate=func.now(),
     )
 
-    observation_dims = relationship("MetricObservationDim", back_populates="dimension")
+    values = relationship("DimensionValue", back_populates="dimension")
 
 
-class MetricObservation(Base):
-    __tablename__ = "metric_observation"
+class DimensionValue(Base):
+    __tablename__ = "dimension_value"
 
-    observation_id = Column(BigInteger, primary_key=True)
+    value_id = Column(BigInteger, primary_key=True)
+    dimension_id = Column(
+        BigInteger,
+        ForeignKey("metrics.dimension_definition.dimension_id"),
+        nullable=False,
+    )
+    value = Column(String(256), nullable=False)
+    created_ts = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    dimension = relationship("DimensionDefinition", back_populates="values")
+    set_values = relationship("DimensionSetValue", back_populates="dimension_value")
+
+
+class DimensionSet(Base):
+    __tablename__ = "dimension_set"
+
+    set_id = Column(BigInteger, primary_key=True)
+    set_hash = Column(String(64), nullable=False)
+    created_ts = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    values = relationship("DimensionSetValue", back_populates="dimension_set")
+
+
+class DimensionSetValue(Base):
+    __tablename__ = "dimension_set_value"
+
+    set_id = Column(
+        BigInteger,
+        ForeignKey("metrics.dimension_set.set_id"),
+        primary_key=True,
+    )
+    value_id = Column(
+        BigInteger,
+        ForeignKey("metrics.dimension_value.value_id"),
+        primary_key=True,
+    )
+    dimension_id = Column(BigInteger, nullable=False)
+
+    dimension_set = relationship("DimensionSet", back_populates="values")
+    dimension_value = relationship("DimensionValue", back_populates="set_values")
+
+
+class MetricSeries(Base):
+    __tablename__ = "metric_series"
+
+    series_id = Column(BigInteger, primary_key=True)
     metric_id = Column(
         BigInteger,
         ForeignKey("metrics.metric_definition.metric_id"),
         nullable=False,
     )
     grain = Column(String(16), nullable=False)
+    set_id = Column(
+        BigInteger,
+        ForeignKey("metrics.dimension_set.set_id"),
+        nullable=False,
+    )
+
+    metric = relationship("MetricDefinition", back_populates="series")
+    dimension_set = relationship("DimensionSet")
+    observations = relationship("MetricObservation", back_populates="series")
+
+
+class MetricObservation(Base):
+    __tablename__ = "metric_observation"
+
+    observation_id = Column(BigInteger, primary_key=True)
+    series_id = Column(
+        BigInteger,
+        ForeignKey("metrics.metric_series.series_id"),
+        nullable=False,
+    )
     time_start_ts = Column(DateTime(timezone=True), nullable=False)
     time_end_ts = Column(DateTime(timezone=True))
     value_num = Column(Float, nullable=False)
     sample_size = Column(BigInteger)
-    is_estimated = Column(Boolean, nullable=False)
+    is_estimated = Column(Boolean, nullable=False, server_default="false")
     ingested_ts = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
-    metric = relationship("MetricDefinition", back_populates="observations")
-    dimensions = relationship("MetricObservationDim", back_populates="observation")
-
-
-class MetricObservationDim(Base):
-    __tablename__ = "metric_observation_dim"
-
-    observation_id = Column(
-        BigInteger,
-        ForeignKey("metrics.metric_observation.observation_id"),
-        primary_key=True,
-    )
-    dimension_id = Column(
-        BigInteger,
-        ForeignKey("metrics.dimension_definition.dimension_id"),
-        primary_key=True,
-    )
-    dimension_value = Column(String(256), nullable=False)
-
-    observation = relationship("MetricObservation", back_populates="dimensions")
-    dimension = relationship("DimensionDefinition", back_populates="observation_dims")
+    series = relationship("MetricSeries", back_populates="observations")
 
 
 class Event(Base):

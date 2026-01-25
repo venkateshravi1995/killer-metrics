@@ -11,7 +11,7 @@ from app.api.routes.v1.utils import (
 from app.api.schemas.queries import AggregateQuery, TimeseriesQuery, TopKQuery
 from app.db.postgres import PostgresExecutor
 from app.db.helpers import resolve_dimension_ids, resolve_metric_id, resolve_metric_ids
-from app.db.schema import MetricDefinition, MetricObservation
+from app.db.schema import MetricDefinition, MetricObservation, MetricSeries
 from app.db.session import get_connection
 
 router = APIRouter(prefix="/v1/query", tags=["queries"])
@@ -56,12 +56,15 @@ async def post_timeseries(
     for aggregation, metric_ids in aggregation_groups.items():
         agg_expr = _aggregation_expression(aggregation).label("value")
         stmt = select(
-            MetricObservation.metric_id,
+            MetricSeries.metric_id,
             MetricObservation.time_start_ts,
             agg_expr,
+        ).join(
+            MetricSeries,
+            MetricSeries.series_id == MetricObservation.series_id,
         ).where(
-            MetricObservation.metric_id.in_(metric_ids),
-            MetricObservation.grain == payload.grain,
+            MetricSeries.metric_id.in_(metric_ids),
+            MetricSeries.grain == payload.grain,
             MetricObservation.time_start_ts >= payload.start_time,
             MetricObservation.time_start_ts < payload.end_time,
         )
@@ -75,7 +78,7 @@ async def post_timeseries(
         )
 
         stmt = stmt.group_by(
-            MetricObservation.metric_id,
+            MetricSeries.metric_id,
             MetricObservation.time_start_ts,
         )
         stmt = stmt.order_by(MetricObservation.time_start_ts)
@@ -135,9 +138,12 @@ async def get_latest(
     stmt = select(
         MetricObservation.time_start_ts,
         MetricObservation.value_num,
+    ).join(
+        MetricSeries,
+        MetricSeries.series_id == MetricObservation.series_id,
     ).where(
-        MetricObservation.metric_id == metric_id,
-        MetricObservation.grain == grain,
+        MetricSeries.metric_id == metric_id,
+        MetricSeries.grain == grain,
     )
 
     stmt = await apply_dimension_pairs(stmt, connection, filters, "latest")
@@ -181,11 +187,14 @@ async def post_aggregate(
     for aggregation, metric_ids in aggregation_groups.items():
         agg_expr = _aggregation_expression(aggregation).label("value")
         stmt = select(
-            MetricObservation.metric_id,
+            MetricSeries.metric_id,
             agg_expr,
+        ).join(
+            MetricSeries,
+            MetricSeries.series_id == MetricObservation.series_id,
         ).where(
-            MetricObservation.metric_id.in_(metric_ids),
-            MetricObservation.grain == payload.grain,
+            MetricSeries.metric_id.in_(metric_ids),
+            MetricSeries.grain == payload.grain,
             MetricObservation.time_start_ts >= payload.start_time,
             MetricObservation.time_start_ts < payload.end_time,
         )
@@ -198,7 +207,7 @@ async def post_aggregate(
             stmt, connection, group_by_labels, "agg", dimension_ids
         )
 
-        stmt = stmt.group_by(MetricObservation.metric_id)
+        stmt = stmt.group_by(MetricSeries.metric_id)
         result = await connection.execute(stmt)
         rows = result.mappings().all()
         for row in rows:
@@ -242,9 +251,12 @@ async def post_topk(
     aggregation = metric_result.scalar_one_or_none() or "sum"
     agg_expr = _aggregation_expression(aggregation).label("value")
 
-    stmt = select(agg_expr).where(
-        MetricObservation.metric_id == metric_id,
-        MetricObservation.grain == payload.grain,
+    stmt = select(agg_expr).join(
+        MetricSeries,
+        MetricSeries.series_id == MetricObservation.series_id,
+    ).where(
+        MetricSeries.metric_id == metric_id,
+        MetricSeries.grain == payload.grain,
         MetricObservation.time_start_ts >= payload.start_time,
         MetricObservation.time_start_ts < payload.end_time,
     )
