@@ -2,16 +2,16 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import select
-from sqlalchemy.orm import aliased
-
 from app.api.routes.v1.utils import set_cache_control
 
 from app.db.postgres import PostgresExecutor
 from app.db.helpers import apply_pagination, resolve_dimension_ids, resolve_metric_id
 from app.db.schema import (
     DimensionDefinition,
+    DimensionSetValue,
+    DimensionValue,
     MetricObservation,
-    MetricObservationDim,
+    MetricSeries,
 )
 from app.db.session import get_connection
 
@@ -66,27 +66,31 @@ async def get_dimension_values(
     dimension_ids = await resolve_dimension_ids(connection, [dimension_key])
     dimension_id = dimension_ids[dimension_key]
 
-    dim_alias = aliased(MetricObservationDim, name="values_dim")
-    stmt = select(dim_alias.dimension_value.label("dimension_value")).distinct()
+    stmt = select(DimensionValue.value.label("dimension_value")).distinct()
+    stmt = stmt.where(DimensionValue.dimension_id == dimension_id)
 
     if metric_key or start_time or end_time:
         stmt = stmt.join(
+            DimensionSetValue,
+            DimensionSetValue.value_id == DimensionValue.value_id,
+        ).join(
+            MetricSeries,
+            MetricSeries.set_id == DimensionSetValue.set_id,
+        ).join(
             MetricObservation,
-            MetricObservation.observation_id == dim_alias.observation_id,
+            MetricObservation.series_id == MetricSeries.series_id,
         )
-
-    stmt = stmt.where(dim_alias.dimension_id == dimension_id)
 
     if metric_key:
         metric_id = await resolve_metric_id(connection, metric_key)
-        stmt = stmt.where(MetricObservation.metric_id == metric_id)
+        stmt = stmt.where(MetricSeries.metric_id == metric_id)
 
     if start_time:
         stmt = stmt.where(MetricObservation.time_start_ts >= start_time)
     if end_time:
         stmt = stmt.where(MetricObservation.time_start_ts < end_time)
 
-    stmt = stmt.order_by(dim_alias.dimension_value)
+    stmt = stmt.order_by(DimensionValue.value)
     stmt = apply_pagination(stmt, limit, offset)
 
     result = await connection.execute(stmt)
