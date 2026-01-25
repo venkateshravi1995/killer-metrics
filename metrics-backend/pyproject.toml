@@ -1,0 +1,24 @@
+[project]
+name = "metric-killer-backend"
+version = "0.1.0"
+description = "FastAPI backend with PostgreSQL via direct connection"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.27",
+  "sqlalchemy[asyncio]>=2.0",
+  "psycopg[binary]>=3.1",
+  "alembic>=1.13",
+]
+
+[project.optional-dependencies]
+dev = [
+  "ruff>=0.4",
+]
+
+[tool.setuptools.packages.find]
+include = ["app"]
+exclude = ["alembic*"]
+
+[tool.ruff]
+line-length = 100
