@@ -7,9 +7,13 @@ import {
   CreateDashboardModal,
   DeleteDashboardModal,
 } from "./modals"
-import { useDashboardBuilderState } from "./state"
+import { useDashboardBuilderState, type DashboardBuilderInitialData } from "./state"
 
-export default function DashboardBuilder() {
+type DashboardBuilderProps = {
+  initialData?: DashboardBuilderInitialData
+}
+
+export default function DashboardBuilder({ initialData }: DashboardBuilderProps) {
   const {
     tiles,
     selectedTileId,
@@ -65,7 +69,7 @@ export default function DashboardBuilder() {
     handleConfigureTile,
     closeConfigurator,
     handleSeriesChange,
-  } = useDashboardBuilderState()
+  } = useDashboardBuilderState(initialData)
 
   return (
     <div className="app-shell flex min-h-screen flex-col">

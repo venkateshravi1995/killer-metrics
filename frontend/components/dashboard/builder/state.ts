@@ -11,7 +11,7 @@ import type {
   SeriesDefinition,
   TileConfig,
 } from "../types"
-import type { DashboardSummary } from "../api"
+import type { DashboardResponse, DashboardSummary } from "../api"
 import {
   commitDraft,
   createDashboard,
@@ -50,24 +50,53 @@ export type DashboardStatus = "idle" | "loading" | "saving" | "error"
 export type DraftStatus = "idle" | "saving"
 export type DeleteTarget = { id: string; name: string } | null
 
-export function useDashboardBuilderState() {
-  const [tiles, setTiles] = useState<TileConfig[]>([])
-  const [selectedTileId, setSelectedTileId] = useState<string | null>(null)
+export type DashboardBuilderInitialData = {
+  metrics?: MetricDefinition[]
+  dimensions?: DimensionDefinition[]
+  dashboards?: DashboardSummary[]
+  activeDashboard?: DashboardResponse
+}
+
+export function useDashboardBuilderState(initialData?: DashboardBuilderInitialData) {
+  const initialTiles = initialData?.activeDashboard
+    ? extractTilesFromConfig(initialData.activeDashboard.config)
+        .map((tile) => normalizeTileConfig(tile))
+        .map((tile) => applyMinSize(tile, gridCols.lg))
+    : []
+  const [tiles, setTiles] = useState<TileConfig[]>(initialTiles)
+  const [selectedTileId, setSelectedTileId] = useState<string | null>(
+    initialTiles[0]?.id ?? null
+  )
   const [editMode, setEditMode] = useState(true)
   const [activeBreakpoint, setActiveBreakpoint] =
     useState<BreakpointKey>("lg")
-  const [metrics, setMetrics] = useState<MetricDefinition[]>([])
-  const [dimensions, setDimensions] = useState<DimensionDefinition[]>([])
-  const [catalogStatus, setCatalogStatus] = useState<CatalogStatus>("loading")
+  const [metrics, setMetrics] = useState<MetricDefinition[]>(
+    initialData?.metrics ?? []
+  )
+  const [dimensions, setDimensions] = useState<DimensionDefinition[]>(
+    initialData?.dimensions ?? []
+  )
+  const [catalogStatus, setCatalogStatus] = useState<CatalogStatus>(
+    initialData?.metrics || initialData?.dimensions ? "ready" : "loading"
+  )
   const [catalogError, setCatalogError] = useState<string | null>(null)
-  const [dashboards, setDashboards] = useState<DashboardSummary[]>([])
-  const [activeDashboardId, setActiveDashboardId] = useState<string | null>(null)
-  const [dashboardName, setDashboardName] = useState("Killer Metric Studio")
-  const [dashboardDescription, setDashboardDescription] = useState("")
-  const [dashboardStatus, setDashboardStatus] =
-    useState<DashboardStatus>("idle")
+  const [dashboards, setDashboards] = useState<DashboardSummary[]>(
+    initialData?.dashboards ?? []
+  )
+  const [activeDashboardId, setActiveDashboardId] = useState<string | null>(
+    initialData?.activeDashboard?.id ?? null
+  )
+  const [dashboardName, setDashboardName] = useState(
+    initialData?.activeDashboard?.name ?? "Killer Metric Studio"
+  )
+  const [dashboardDescription, setDashboardDescription] = useState(
+    initialData?.activeDashboard?.description ?? ""
+  )
+  const [dashboardStatus, setDashboardStatus] = useState<DashboardStatus>("idle")
   const [dashboardError, setDashboardError] = useState<string | null>(null)
-  const [hasDraft, setHasDraft] = useState(false)
+  const [hasDraft, setHasDraft] = useState(
+    Boolean(initialData?.activeDashboard?.is_draft)
+  )
   const [draftStatus, setDraftStatus] = useState<DraftStatus>("idle")
   const [draftError, setDraftError] = useState<string | null>(null)
   const [seriesByTileId, setSeriesByTileId] = useState<
@@ -98,6 +127,7 @@ export function useDashboardBuilderState() {
   const draftInFlightRef = useRef(0)
   const metadataRef = useRef({ name: dashboardName, description: dashboardDescription })
   const cacheHydratedRef = useRef(false)
+  const initialDataRef = useRef(initialData)
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -298,12 +328,44 @@ export function useDashboardBuilderState() {
             : normalizedTiles[0]?.id ?? null
         setSelectedTileId(resolvedSelected)
       }
+      cacheHydratedRef.current = true
+      refreshDashboards()
+      return
     }
+
+    const initial = initialDataRef.current
+    if (initial?.dashboards?.length || initial?.activeDashboard) {
+      if (initial.dashboards?.length) {
+        setDashboards(initial.dashboards)
+      }
+      if (initial.activeDashboard) {
+        setActiveDashboardId(initial.activeDashboard.id)
+        activeDashboardIdRef.current = initial.activeDashboard.id
+        applyDashboardMetadata(
+          initial.activeDashboard.name,
+          initial.activeDashboard.description
+        )
+        setHasDraft(Boolean(initial.activeDashboard.is_draft))
+        setIsRenaming(false)
+        const normalizedTiles = extractTilesFromConfig(
+          initial.activeDashboard.config
+        ).map((tile) => normalizeTileConfig(tile))
+        applyDashboardTiles(normalizedTiles)
+        setSelectedTileId(normalizedTiles[0]?.id ?? null)
+        setSeriesByTileId({})
+      }
+      cacheHydratedRef.current = true
+      return
+    }
+
     cacheHydratedRef.current = true
     refreshDashboards()
   }, [applyDashboardMetadata, applyDashboardTiles, refreshDashboards])
 
   useEffect(() => {
+    if (initialDataRef.current?.metrics || initialDataRef.current?.dimensions) {
+      return
+    }
     let isActive = true
     setCatalogStatus("loading")
     setCatalogError(null)
