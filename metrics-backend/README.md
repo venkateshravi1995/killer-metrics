@@ -26,11 +26,3 @@ alembic upgrade head
 ```
 
 Alembic uses `psycopg`; install the default dependencies if needed.
-
-If you prefer offline SQL output:
-
-```bash
-cd metrics-backend
-alembic upgrade head --sql > /tmp/metrics_schema.sql
-python scripts/apply_alembic_sql.py /tmp/metrics_schema.sql
-```
