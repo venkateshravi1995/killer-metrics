@@ -5,7 +5,6 @@ from pathlib import Path
 
 def _load_dotenv() -> None:
     env_paths = [
-        Path(__file__).resolve().parents[2] / ".env",
         Path(__file__).resolve().parents[3] / ".env",
     ]
     for env_path in env_paths:

@@ -260,7 +260,8 @@ async def list_dashboards(
     items = result.scalars().all()
     next_cursor = None
     if len(items) > limit:
-        last = items.pop()
+        items.pop()
+        last = items[-1]
         next_cursor = _encode_cursor(
             {
                 "updated_at": last.updated_at.isoformat(),

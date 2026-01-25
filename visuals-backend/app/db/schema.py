@@ -31,8 +31,8 @@ class Dashboard(Base):
 
     id = Column(String(32), primary_key=True)
     client_id = Column(String(128), nullable=False)
-    user_id = Column(String(128), nullable=False, server_default="")
-    is_draft = Column(Boolean, nullable=False, server_default=false())
+    user_id = Column(String(128), primary_key=True, server_default="")
+    is_draft = Column(Boolean, primary_key=True, server_default=false())
     name = Column(String(160), nullable=False)
     description = Column(String(2048))
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())

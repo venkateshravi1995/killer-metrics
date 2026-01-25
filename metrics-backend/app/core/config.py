@@ -6,7 +6,6 @@ from pathlib import Path
 def _load_dotenv() -> None:
     env_paths = [
         Path(__file__).resolve().parents[3] / ".env",
-        Path(__file__).resolve().parents[4] / ".env",
     ]
     for env_path in env_paths:
         if not env_path.exists():
