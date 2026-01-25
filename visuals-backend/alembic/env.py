@@ -33,7 +33,6 @@ def _load_dotenv() -> None:
 
 _load_dotenv()
 
-
 def _build_database_url() -> str | None:
     url = os.getenv("DASHBOARDING_DATABASE_URL") or os.getenv("DATABASE_URL")
     if url:
