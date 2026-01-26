@@ -11,10 +11,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Annotated, Any, cast
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import and_, delete, func, or_, select
 
-from app.core.config import settings
+from app.core.auth import require_neon_auth
 from app.db.schema import Dashboard, DashboardTile
 from app.db.session import get_session
 from app.schemas.dashboards import (
@@ -33,13 +33,14 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
     from sqlalchemy.sql.elements import ColumnElement
+
+    from app.core.auth import AuthContext
 else:
     AsyncSession = Any
 
 router = APIRouter(prefix="/v1/dashboards", tags=["dashboards"])
 
-CLIENT_ID_HEADER = settings.client_id_header
-USER_ID_HEADER = settings.user_id_header
+NEON_AUTH_DEP = Depends(require_neon_auth)
 SESSION_DEPENDENCY = Depends(get_session)
 SessionDep = Annotated[AsyncSession, SESSION_DEPENDENCY]
 
@@ -112,22 +113,14 @@ def _item_to_summary(item: Dashboard) -> DashboardSummary:
     )
 
 
-def get_client_id(
-    x_client_id: Annotated[str | None, Header(alias=CLIENT_ID_HEADER)] = None,
-    x_user_id: Annotated[str | None, Header(alias=USER_ID_HEADER)] = None,
-) -> str:
-    """Resolve the client identifier from request headers."""
-    value = (x_client_id or x_user_id or "1").strip()
-    return value or "1"
+def get_client_id(auth: Annotated[AuthContext, NEON_AUTH_DEP]) -> str:
+    """Resolve the client identifier from Neon Auth."""
+    return auth.client_id
 
 
-def get_user_id(
-    x_user_id: Annotated[str | None, Header(alias=USER_ID_HEADER)] = None,
-    x_client_id: Annotated[str | None, Header(alias=CLIENT_ID_HEADER)] = None,
-) -> str:
-    """Resolve the user identifier from request headers."""
-    value = (x_user_id or x_client_id or "1").strip()
-    return value or "1"
+def get_user_id(auth: Annotated[AuthContext, NEON_AUTH_DEP]) -> str:
+    """Resolve the user identifier from Neon Auth."""
+    return auth.user_id
 
 
 @dataclass(frozen=True)

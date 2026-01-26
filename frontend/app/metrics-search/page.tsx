@@ -19,6 +19,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Slider } from "@/components/ui/slider"
 import { Switch } from "@/components/ui/switch"
+import { getNeonAuthToken } from "@/lib/neon-auth-token"
 
 type SearchField = "metric_name" | "metric_description" | "metric_type"
 
@@ -156,11 +157,18 @@ export default function MetricsSearchPage() {
         limit,
         offset: nextOffset,
       }
+      const token = await getNeonAuthToken()
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      }
+      if (token) {
+        headers.Authorization = `Bearer ${token}`
+      }
       const response = await fetch(
         `${resolvedBaseUrl}/v1/metrics/search`,
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers,
           body: JSON.stringify(payload),
         }
       )

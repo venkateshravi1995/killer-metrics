@@ -117,7 +117,7 @@ def apply_sql(statements: list[str], url: str) -> None:
         for raw_statement in statements:
             statement = _rewrite_alembic_version_create(raw_statement)
             try:
-                safe_statement = cast(LiteralString, statement)
+                safe_statement = cast("LiteralString", statement)
                 conn.execute(sql.SQL(safe_statement))
             except Exception as exc:
                 if _is_duplicate_relation_error(statement, exc):
