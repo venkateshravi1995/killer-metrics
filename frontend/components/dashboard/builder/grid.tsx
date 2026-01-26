@@ -1,5 +1,6 @@
 "use client"
 
+import type { ComponentType } from "react"
 import dynamic from "next/dynamic"
 import type {
   Layout,
@@ -18,13 +19,18 @@ import type {
 import { TileCard } from "./tile-card"
 import { gridBreakpoints, gridCols, type BreakpointKey } from "./utils"
 
-const ResponsiveGridLayout = dynamic<LegacyResponsiveReactGridLayoutProps>(
-  () =>
-    import("react-grid-layout/legacy").then((mod) =>
-      mod.WidthProvider(mod.Responsive)
-    ),
+type ResponsiveGridLayoutProps = Omit<
+  LegacyResponsiveReactGridLayoutProps,
+  "width"
+>
+
+const ResponsiveGridLayout = dynamic(
+  async () => {
+    const mod = await import("react-grid-layout/legacy")
+    return mod.WidthProvider(mod.Responsive)
+  },
   { ssr: false }
-)
+) as ComponentType<ResponsiveGridLayoutProps>
 
 type GridLayouts = LegacyResponsiveReactGridLayoutProps["layouts"]
 
@@ -43,7 +49,7 @@ type DashboardGridProps = {
   onDuplicateTile: (tileId: string) => void
   onRemoveTile: (tileId: string) => void
   onSeriesChange: (tileId: string, series: SeriesDefinition[]) => void
-  onLayoutCommit: (layout: Layout[]) => void
+  onLayoutCommit: (layout: Layout) => void
   onBreakpointChange: (breakpoint: BreakpointKey) => void
 }
 

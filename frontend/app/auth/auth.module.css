@@ -2,6 +2,7 @@
   position: relative;
   min-height: 100vh;
   overflow: hidden;
+  --topbar-height: 56px;
   background:
     radial-gradient(circle at 15% 20%, rgba(255, 205, 170, 0.5), transparent 50%),
     radial-gradient(circle at 85% 10%, rgba(140, 220, 220, 0.35), transparent 48%),
@@ -49,6 +50,7 @@
   justify-content: space-between;
   gap: 16px;
   padding: 14px 24px;
+  height: var(--topbar-height);
   border-bottom: 1px solid rgba(255, 255, 255, 0.7);
   background: linear-gradient(
     120deg,
@@ -68,7 +70,11 @@
   font-family: var(--font-display);
   font-size: 0.85rem;
   letter-spacing: 0.38em;
-  text-shadow: 0 8px 18px rgba(15, 23, 42, 0.18);
+  background: linear-gradient(120deg, #0ea5e9, #14b8a6, #f97316);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  text-shadow: 0 10px 22px rgba(15, 23, 42, 0.2);
 }
 
 .topbarLink {
@@ -87,6 +93,11 @@
 
 .topbarLink:hover {
   background: rgba(255, 255, 255, 0.95);
+}
+
+:global(.dark) .topbarLink:hover {
+  background: rgba(30, 41, 59, 0.9);
+  color: rgba(248, 250, 252, 0.9);
 }
 
 .topbar::before {
@@ -495,7 +506,7 @@
   position: relative;
   z-index: 5;
   display: flex;
-  min-height: 100vh;
+  min-height: calc(100vh - var(--topbar-height));
   align-items: center;
   justify-content: center;
   padding: 24px;
@@ -504,9 +515,15 @@
 .cardWrap {
   position: relative;
   isolation: isolate;
-  padding-top: 56px;
+  padding-top: 0;
   filter: drop-shadow(0 30px 60px rgba(15, 23, 42, 0.25));
-  transform: scale(1.08);
+  transform: none;
+}
+
+.authPanel {
+  width: min(420px, 92vw);
+  font-size: 1rem;
+  transform: scale(1.02);
   transform-origin: center;
 }
 

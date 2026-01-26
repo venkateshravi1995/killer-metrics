@@ -1,3 +1,4 @@
+import type { ReactElement } from "react"
 import type {
   AggregateGroup,
   ChartDatum,
@@ -78,7 +79,7 @@ export type TileDefinition = {
     description: string
   }
   visualOptions: TileVisualOptions
-  render: (props: TileRenderProps) => JSX.Element
+  render: (props: TileRenderProps) => ReactElement
   getMinSize?: (tile: TileConfig) => { minW: number; minH: number }
   configurator?: TileConfiguratorComponent
 }
@@ -107,4 +108,4 @@ export type TileConfiguratorProps = {
   clearSeriesColors: () => void
 }
 
-export type TileConfiguratorComponent = (props: TileConfiguratorProps) => JSX.Element
+export type TileConfiguratorComponent = (props: TileConfiguratorProps) => ReactElement

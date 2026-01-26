@@ -1,7 +1,7 @@
 "use client"
 
 import type { CSSProperties } from "react"
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { memo, useCallback, useEffect, useRef, useState } from "react"
 import { AuthView } from "@neondatabase/neon-js/auth/react/ui"
 import { useParams } from "next/navigation"
 
@@ -72,9 +72,9 @@ const labelPool = [
 const unitPool = ["%", "ms", "k", "x", " req/s"]
 
 const MAX_TILES = 24
-const EXTRA_TILES = 6
-const UPDATE_INTERVAL_MS = 6000
-const UPDATE_BATCH_SIZE = 6
+const EXTRA_TILES = 4
+const UPDATE_INTERVAL_MS = 9000
+const UPDATE_BATCH_SIZE = 3
 
 const palette = [
   { accent: "#14b8a6", soft: "rgba(20, 184, 166, 0.22)" },
@@ -237,12 +237,113 @@ const formatDelta = (tile: Tile) => {
   return `${sign}${Math.abs(Number(raw))}${tile.unit}`
 }
 
-const getTileCount = (width: number, height: number) => {
+const getTileCount = (width: number, height: number, memoryClass: number) => {
   const columns = width < 640 ? 2 : width < 1024 ? 4 : 6
   const rows = Math.max(3, Math.ceil(height / 260))
-  const count = Math.min(columns * rows, MAX_TILES)
+  const memoryCap =
+    memoryClass <= 2 ? 12 : memoryClass <= 4 ? 16 : memoryClass <= 8 ? 20 : MAX_TILES
+  const count = Math.min(columns * rows, memoryCap)
   return { columns, count }
 }
+
+type TileCardProps = {
+  tile: Tile
+  iteration: number
+  registerTile: (id: string) => (node: HTMLDivElement | null) => void
+  isVisible: boolean
+}
+
+const TileCard = memo(({ tile, iteration, registerTile, isVisible }: TileCardProps) => {
+  const sizeClass = tile.size
+    ? tile.size === "wide"
+      ? styles.tileWide
+      : tile.size === "tall"
+        ? styles.tileTall
+        : styles.tileXL
+    : ""
+  const badgeClass = tile.delta < 0 ? `${styles.badge} ${styles.badgeNegative}` : styles.badge
+  const chartStyle: CSSProperties & Record<`--${string}`, string> = {
+    "--accent": tile.accent,
+    "--accent-soft": tile.accentSoft,
+    "--pie": buildPieGradient(tile.segments, tile.accent, tile.accentSoft),
+  }
+  const showCharts = isVisible
+
+  return (
+    <div
+      key={`${tile.id}-${iteration}`}
+      className={`${styles.tile} ${sizeClass}`}
+      style={chartStyle}
+      data-base-id={tile.id}
+      ref={registerTile(tile.id)}
+    >
+      <div className={styles.title}>
+        <span>{tile.title}</span>
+        <span className={badgeClass}>{formatDelta(tile)}</span>
+      </div>
+      {tile.type === "kpi" ? (
+        <div className={styles.kpi}>
+          <span className={styles.kpiBig}>{formatValue(tile)}</span>
+          <span className={styles.kpiUnit}>KPI</span>
+        </div>
+      ) : (
+        <div className={styles.value}>{formatValue(tile)}</div>
+      )}
+      <div className={styles.meta}>Live signal update</div>
+      {showCharts && tile.type === "line" ? (
+        <svg className={styles.sparkline} viewBox="0 0 100 100" preserveAspectRatio="none">
+          <polyline points={buildSparklinePoints(tile.series)} />
+          <circle cx="100" cy="40" r="3" />
+        </svg>
+      ) : null}
+      {showCharts && tile.type === "area" ? (
+        <svg className={styles.area} viewBox="0 0 100 100" preserveAspectRatio="none">
+          <path d={buildAreaPath(tile.series)} />
+        </svg>
+      ) : null}
+      {showCharts && tile.type === "bars" ? (
+        <div className={styles.bars}>
+          {tile.series.slice(0, 9).map((value, idx) => (
+            <span
+              key={`${tile.id}-${idx}`}
+              className={styles.bar}
+              style={
+                { height: `${30 + (value % 60)}%`, "--delay": `${idx * 0.2}s` } as CSSProperties
+              }
+            />
+          ))}
+        </div>
+      ) : null}
+      {showCharts && tile.type === "hbars" ? (
+        <div className={styles.hbars}>
+          {tile.series.slice(0, 5).map((value, idx) => (
+            <div key={`${tile.id}-h-${idx}`} className={styles.hbar}>
+              <div className={styles.hbarFill} style={{ width: `${30 + (value % 70)}%` }} />
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {showCharts && (tile.type === "pie" || tile.type === "donut") ? (
+        <div className={styles.chartRow}>
+          <div>
+            <div className={styles.meta}>Segments</div>
+            <div className={styles.value}>{Math.round(tile.segments[0])}%</div>
+          </div>
+          <div className={`${styles.pie} ${tile.type === "donut" ? styles.donut : ""}`}>
+            <span>{Math.round(tile.segments[1])}%</span>
+          </div>
+        </div>
+      ) : null}
+      {showCharts && tile.type === "radar" ? (
+        <svg className={styles.radar} viewBox="0 0 120 120" preserveAspectRatio="xMidYMid meet">
+          <polygon points={buildRadarPoints(tile.radar)} />
+        </svg>
+      ) : null}
+    </div>
+  )
+})
+
+TileCard.displayName = "TileCard"
 
 export default function AuthPage() {
   const params = useParams<{ path?: string | string[] }>()
@@ -257,21 +358,30 @@ export default function AuthPage() {
   const [mounted, setMounted] = useState(false)
   const [tiles, setTiles] = useState<Tile[]>([])
   const [columns, setColumns] = useState(6)
+  const [repeatCount, setRepeatCount] = useState(2)
   const [visibleIds, setVisibleIds] = useState<Set<string>>(() => new Set())
   const observerRef = useRef<IntersectionObserver | null>(null)
   const visibleCounts = useRef(new Map<string, number>())
   const updateCursorRef = useRef(0)
-
-  const visibleTiles = useMemo(() => tiles, [tiles])
+  const visibleIdsRef = useRef<Set<string>>(new Set())
+  const prefersReducedMotion = useRef(false)
+  const memoryClass = useRef(8)
 
   useEffect(() => {
     setMounted(true)
     const seed = Math.floor(Date.now() / 1000)
     const rand = mulberry32(seed)
+    const nav = navigator as Navigator & { deviceMemory?: number }
+    memoryClass.current = nav.deviceMemory ?? 8
 
     const buildTilesForViewport = () => {
-      const { columns: nextColumns, count } = getTileCount(window.innerWidth, window.innerHeight)
+      const { columns: nextColumns, count } = getTileCount(
+        window.innerWidth,
+        window.innerHeight,
+        memoryClass.current
+      )
       setColumns(nextColumns)
+      setRepeatCount(window.innerWidth < 1024 ? 1 : 2)
       const nextTiles = Array.from(
         { length: count + EXTRA_TILES },
         (_, index) => buildTile(rand, index)
@@ -280,6 +390,7 @@ export default function AuthPage() {
     }
 
     buildTilesForViewport()
+    prefersReducedMotion.current = window.matchMedia("(prefers-reduced-motion: reduce)").matches
     const handleResize = () => buildTilesForViewport()
     window.addEventListener("resize", handleResize)
 
@@ -304,7 +415,14 @@ export default function AuthPage() {
             visibleCounts.current.set(id, next)
           }
         })
-        setVisibleIds(new Set(visibleCounts.current.keys()))
+        const next = new Set(visibleCounts.current.keys())
+        const prev = visibleIdsRef.current
+        const isSameSize = next.size === prev.size
+        const isSame = isSameSize && Array.from(next).every((id) => prev.has(id))
+        if (!isSame) {
+          visibleIdsRef.current = next
+          setVisibleIds(next)
+        }
       },
       { threshold: 0.2, rootMargin: "120px" }
     )
@@ -331,19 +449,27 @@ export default function AuthPage() {
 
   useEffect(() => {
     if (!mounted) return
+    if (prefersReducedMotion.current) return
     const interval = setInterval(() => {
       if (document.hidden || visibleIds.size === 0) return
-      setTiles((prev) => {
-        const visibleList = prev.filter((tile) => visibleIds.has(tile.id))
-        if (!visibleList.length) return prev
-        const start = updateCursorRef.current % visibleList.length
-        const batch = visibleList
-          .slice(start, start + UPDATE_BATCH_SIZE)
-          .map((tile) => tile.id)
-        updateCursorRef.current = start + UPDATE_BATCH_SIZE
-        const batchSet = new Set(batch)
-        return prev.map((tile) => (batchSet.has(tile.id) ? updateTile(tile) : tile))
-      })
+      const update = () => {
+        setTiles((prev) => {
+          const visibleList = prev.filter((tile) => visibleIds.has(tile.id))
+          if (!visibleList.length) return prev
+          const start = updateCursorRef.current % visibleList.length
+          const batch = visibleList
+            .slice(start, start + UPDATE_BATCH_SIZE)
+            .map((tile) => tile.id)
+          updateCursorRef.current = start + UPDATE_BATCH_SIZE
+          const batchSet = new Set(batch)
+          return prev.map((tile) => (batchSet.has(tile.id) ? updateTile(tile) : tile))
+        })
+      }
+      if (typeof requestIdleCallback === "function") {
+        requestIdleCallback(update, { timeout: 1200 })
+      } else {
+        update()
+      }
     }, UPDATE_INTERVAL_MS)
 
     return () => clearInterval(interval)
@@ -369,115 +495,17 @@ export default function AuthPage() {
             <div className={styles.grid} />
             <div className={styles.scroll} style={{ "--columns": columns } as CSSProperties}>
               <div className={styles.track}>
-                {[0, 1].map((iteration) => (
+                {Array.from({ length: repeatCount }).map((_, iteration) => (
                   <div className={styles.metrics} key={`grid-${iteration}`}>
-                    {visibleTiles.map((tile, index) => {
-                      const sizeClass = tile.size
-                        ? tile.size === "wide"
-                          ? styles.tileWide
-                          : tile.size === "tall"
-                            ? styles.tileTall
-                            : styles.tileXL
-                        : ""
-                      const badgeClass =
-                        tile.delta < 0
-                          ? `${styles.badge} ${styles.badgeNegative}`
-                          : styles.badge
-
-                      const chartStyle: CSSProperties = {
-                        "--accent": tile.accent,
-                        "--accent-soft": tile.accentSoft,
-                        "--pie": buildPieGradient(tile.segments, tile.accent, tile.accentSoft),
-                      }
-
-                      return (
-                        <div
-                          key={`${tile.id}-${iteration}`}
-                          className={`${styles.tile} ${sizeClass}`}
-                          style={chartStyle}
-                          data-base-id={tile.id}
-                          ref={registerTile(tile.id)}
-                        >
-                          <div className={styles.title}>
-                            <span>{tile.title}</span>
-                            <span className={badgeClass}>{formatDelta(tile)}</span>
-                          </div>
-                          {tile.type === "kpi" ? (
-                            <div className={styles.kpi}>
-                              <span className={styles.kpiBig}>{formatValue(tile)}</span>
-                              <span className={styles.kpiUnit}>KPI</span>
-                            </div>
-                          ) : (
-                            <div className={styles.value}>{formatValue(tile)}</div>
-                          )}
-                          <div className={styles.meta}>Live signal update</div>
-                          {tile.type === "line" ? (
-                            <svg
-                              className={styles.sparkline}
-                              viewBox="0 0 100 100"
-                              preserveAspectRatio="none"
-                            >
-                              <polyline points={buildSparklinePoints(tile.series)} />
-                              <circle cx="100" cy="40" r="3" />
-                            </svg>
-                          ) : null}
-                          {tile.type === "area" ? (
-                            <svg
-                              className={styles.area}
-                              viewBox="0 0 100 100"
-                              preserveAspectRatio="none"
-                            >
-                              <path d={buildAreaPath(tile.series)} />
-                            </svg>
-                          ) : null}
-                          {tile.type === "bars" ? (
-                            <div className={styles.bars}>
-                              {tile.series.slice(0, 9).map((value, idx) => (
-                                <span
-                                  key={`${tile.id}-${idx}`}
-                                  className={styles.bar}
-                                  style={{ height: `${30 + (value % 60)}%`, "--delay": `${idx * 0.2}s` } as CSSProperties}
-                                />
-                              ))}
-                            </div>
-                          ) : null}
-                          {tile.type === "hbars" ? (
-                            <div className={styles.hbars}>
-                              {tile.series.slice(0, 5).map((value, idx) => (
-                                <div key={`${tile.id}-h-${idx}`} className={styles.hbar}>
-                                  <div
-                                    className={styles.hbarFill}
-                                    style={{ width: `${30 + (value % 70)}%` }}
-                                  />
-                                </div>
-                              ))}
-                            </div>
-                          ) : null}
-                          {tile.type === "pie" || tile.type === "donut" ? (
-                            <div className={styles.chartRow}>
-                              <div>
-                                <div className={styles.meta}>Segments</div>
-                                <div className={styles.value}>{Math.round(tile.segments[0])}%</div>
-                              </div>
-                              <div
-                                className={`${styles.pie} ${tile.type === "donut" ? styles.donut : ""}`}
-                              >
-                                <span>{Math.round(tile.segments[1])}%</span>
-                              </div>
-                            </div>
-                          ) : null}
-                          {tile.type === "radar" ? (
-                            <svg
-                              className={styles.radar}
-                              viewBox="0 0 120 120"
-                              preserveAspectRatio="xMidYMid meet"
-                            >
-                              <polygon points={buildRadarPoints(tile.radar)} />
-                            </svg>
-                          ) : null}
-                        </div>
-                      )
-                    })}
+                    {tiles.map((tile) => (
+                      <TileCard
+                        key={`${tile.id}-${iteration}`}
+                        tile={tile}
+                        iteration={iteration}
+                        registerTile={registerTile}
+                        isVisible={visibleIds.has(tile.id)}
+                      />
+                    ))}
                   </div>
                 ))}
               </div>
@@ -486,7 +514,9 @@ export default function AuthPage() {
         ) : null}
         <div className={styles.overlay}>
           <div className={styles.cardWrap}>
-            <AuthView path={authPath} redirectTo="/" />
+            <div className={styles.authPanel}>
+              <AuthView path={authPath} redirectTo="/" />
+            </div>
           </div>
         </div>
       </div>

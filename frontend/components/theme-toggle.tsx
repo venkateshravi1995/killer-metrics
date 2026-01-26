@@ -67,12 +67,15 @@ export function ThemeToggle() {
     const handleChange = (event: MediaQueryListEvent) => {
       update(event.matches ? "dark" : "light")
     }
-    if ("addEventListener" in media) {
+    if (typeof media.addEventListener === "function") {
       media.addEventListener("change", handleChange)
       return () => media.removeEventListener("change", handleChange)
     }
-    media.addListener(handleChange)
-    return () => media.removeListener(handleChange)
+    if (typeof media.addListener === "function") {
+      media.addListener(handleChange)
+      return () => media.removeListener(handleChange)
+    }
+    return undefined
   }, [setting])
 
   const handleToggle = () => {
