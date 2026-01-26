@@ -85,7 +85,7 @@ export function ThemeToggle() {
 
   const isDark = resolvedTheme === "dark"
   const isAuto = setting === "auto"
-  const label = isAuto ? "Auto (system)" : isDark ? "Dark mode" : "Light mode"
+  const label = isAuto ? "Auto" : isDark ? "Dark mode" : "Light mode"
   const shortLabel = isAuto ? "Auto" : isDark ? "Dark" : "Light"
 
   return (

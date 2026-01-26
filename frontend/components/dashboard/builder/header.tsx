@@ -13,9 +13,12 @@ import {
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import Link from "next/link"
+
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
@@ -331,6 +334,37 @@ export function DashboardHeader({
                 <TooltipContent>Add a new tile</TooltipContent>
               </Tooltip>
               <ThemeToggle />
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    className="gap-2 rounded-full shadow-sm"
+                    aria-label="Account menu"
+                  >
+                    <span className="flex size-6 items-center justify-center rounded-full bg-gradient-to-br from-amber-400 to-teal-400 text-[0.55rem] font-bold text-white">
+                      VK
+                    </span>
+                    <span className="text-[10px] font-semibold uppercase tracking-[0.2em]">
+                      Account
+                    </span>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-44">
+                  <DropdownMenuLabel>Account</DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem asChild>
+                    <Link href="/account/profile">Profile</Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <Link href="/account/settings">Settings</Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem variant="destructive" asChild>
+                    <Link href="/auth/sign-out">Logout</Link>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           </div>
           {dashboardError || draftError ? (
