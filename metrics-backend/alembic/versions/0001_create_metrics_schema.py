@@ -5,9 +5,9 @@ Revises: None
 Create Date: 2025-01-01 00:00:00.000000
 
 """
-from alembic import op
 import sqlalchemy as sa
 
+from alembic import op
 
 revision = "0001_create_metrics_schema"
 down_revision = None
@@ -15,12 +15,14 @@ branch_labels = None
 depends_on = None
 
 
-def upgrade():
+def upgrade() -> None:
+    """Create the metrics schema and core tables."""
     op.execute(sa.text("CREATE SCHEMA IF NOT EXISTS metrics"))
+    op.execute(sa.text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
 
     op.create_table(
         "metric_definition",
-        sa.Column("metric_id", sa.BigInteger(), sa.Identity(start=1, increment=1), primary_key=True),
+        sa.Column("metric_id", sa.BigInteger(), sa.Identity(), primary_key=True),
         sa.Column("metric_key", sa.String(length=128), nullable=False),
         sa.Column("metric_name", sa.String(length=256), nullable=False),
         sa.Column("metric_description", sa.String(length=2048)),
@@ -41,25 +43,26 @@ def upgrade():
             nullable=False,
             server_default=sa.text("CURRENT_TIMESTAMP"),
         ),
-        sa.UniqueConstraint("metric_key", name="uq_metric_definition_metric_key"),
+        sa.CheckConstraint("metric_key = lower(metric_key)", name="ck_metric_key_lower"),
+        sa.UniqueConstraint("metric_key", name="uq_metric_key"),
         schema="metrics",
     )
-    op.create_index(
-        "ix_metric_definition_metric_key",
-        "metric_definition",
-        ["metric_key"],
-        unique=False,
-        schema="metrics",
+    op.execute(
+        sa.text(
+            "CREATE INDEX ix_metric_key_trgm "
+            "ON metrics.metric_definition USING gin (lower(metric_key) gin_trgm_ops)",
+        ),
+    )
+    op.execute(
+        sa.text(
+            "CREATE INDEX ix_metric_name_trgm "
+            "ON metrics.metric_definition USING gin (lower(metric_name) gin_trgm_ops)",
+        ),
     )
 
     op.create_table(
         "dimension_definition",
-        sa.Column(
-            "dimension_id",
-            sa.BigInteger(),
-            sa.Identity(start=1, increment=1),
-            primary_key=True,
-        ),
+        sa.Column("dimension_id", sa.BigInteger(), sa.Identity(), primary_key=True),
         sa.Column("dimension_key", sa.String(length=128), nullable=False),
         sa.Column("dimension_name", sa.String(length=256), nullable=False),
         sa.Column("dimension_description", sa.String(length=2048)),
@@ -77,27 +80,120 @@ def upgrade():
             nullable=False,
             server_default=sa.text("CURRENT_TIMESTAMP"),
         ),
-        sa.UniqueConstraint("dimension_key", name="uq_dimension_definition_dimension_key"),
+        sa.CheckConstraint("dimension_key = lower(dimension_key)", name="ck_dimension_key_lower"),
+        sa.UniqueConstraint("dimension_key", name="uq_dimension_key"),
+        schema="metrics",
+    )
+    op.execute(
+        sa.text(
+            "CREATE INDEX ix_dimension_key_trgm "
+            "ON metrics.dimension_definition USING gin (lower(dimension_key) gin_trgm_ops)",
+        ),
+    )
+    op.execute(
+        sa.text(
+            "CREATE INDEX ix_dimension_name_trgm "
+            "ON metrics.dimension_definition USING gin (lower(dimension_name) gin_trgm_ops)",
+        ),
+    )
+
+    op.create_table(
+        "dimension_value",
+        sa.Column("value_id", sa.BigInteger(), sa.Identity(), primary_key=True),
+        sa.Column("dimension_id", sa.BigInteger(), nullable=False),
+        sa.Column("value", sa.String(length=256), nullable=False),
+        sa.Column(
+            "created_ts",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("CURRENT_TIMESTAMP"),
+        ),
+        sa.ForeignKeyConstraint(
+            ["dimension_id"],
+            ["metrics.dimension_definition.dimension_id"],
+        ),
+        sa.UniqueConstraint("dimension_id", "value", name="uq_dimension_value"),
+        sa.UniqueConstraint("dimension_id", "value_id", name="uq_dimension_value_dim_valueid"),
+        schema="metrics",
+    )
+
+    op.create_table(
+        "dimension_set",
+        sa.Column("set_id", sa.BigInteger(), sa.Identity(), primary_key=True),
+        sa.Column("set_hash", sa.String(length=64), nullable=False),
+        sa.Column(
+            "created_ts",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("CURRENT_TIMESTAMP"),
+        ),
+        sa.UniqueConstraint("set_hash", name="uq_dimension_set_hash"),
+        schema="metrics",
+    )
+
+    op.create_table(
+        "dimension_set_value",
+        sa.Column("set_id", sa.BigInteger(), nullable=False),
+        sa.Column("dimension_id", sa.BigInteger(), nullable=False),
+        sa.Column("value_id", sa.BigInteger(), nullable=False),
+        sa.ForeignKeyConstraint(
+            ["set_id"],
+            ["metrics.dimension_set.set_id"],
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["dimension_id", "value_id"],
+            ["metrics.dimension_value.dimension_id", "metrics.dimension_value.value_id"],
+            ondelete="CASCADE",
+            name="fk_dsv_dim_value",
+        ),
+        sa.PrimaryKeyConstraint("set_id", "value_id", name="pk_dimension_set_value"),
         schema="metrics",
     )
     op.create_index(
-        "ix_dimension_definition_dimension_key",
-        "dimension_definition",
-        ["dimension_key"],
+        "ix_dsv_dim_value_set",
+        "dimension_set_value",
+        ["dimension_id", "value_id", "set_id"],
+        unique=False,
+        schema="metrics",
+    )
+    op.create_index(
+        "ix_dsv_value_set",
+        "dimension_set_value",
+        ["value_id", "set_id"],
+        unique=False,
+        schema="metrics",
+    )
+
+    op.create_table(
+        "metric_series",
+        sa.Column("series_id", sa.BigInteger(), sa.Identity(), primary_key=True),
+        sa.Column("metric_id", sa.BigInteger(), nullable=False),
+        sa.Column("grain", sa.String(length=16), nullable=False),
+        sa.Column("set_id", sa.BigInteger(), nullable=False),
+        sa.ForeignKeyConstraint(
+            ["metric_id"],
+            ["metrics.metric_definition.metric_id"],
+        ),
+        sa.ForeignKeyConstraint(
+            ["set_id"],
+            ["metrics.dimension_set.set_id"],
+        ),
+        sa.UniqueConstraint("metric_id", "grain", "set_id", name="uq_metric_series"),
+        schema="metrics",
+    )
+    op.create_index(
+        "ix_metric_series_set_id",
+        "metric_series",
+        ["set_id"],
         unique=False,
         schema="metrics",
     )
 
     op.create_table(
         "metric_observation",
-        sa.Column(
-            "observation_id",
-            sa.BigInteger(),
-            sa.Identity(start=1, increment=1),
-            primary_key=True,
-        ),
-        sa.Column("metric_id", sa.BigInteger(), nullable=False),
-        sa.Column("grain", sa.String(length=16), nullable=False),
+        sa.Column("observation_id", sa.BigInteger(), sa.Identity(), primary_key=True),
+        sa.Column("series_id", sa.BigInteger(), nullable=False),
         sa.Column("time_start_ts", sa.DateTime(timezone=True), nullable=False),
         sa.Column("time_end_ts", sa.DateTime(timezone=True)),
         sa.Column("value_num", sa.Float(), nullable=False),
@@ -110,74 +206,36 @@ def upgrade():
             server_default=sa.text("CURRENT_TIMESTAMP"),
         ),
         sa.ForeignKeyConstraint(
-            ["metric_id"],
-            ["metrics.metric_definition.metric_id"],
-            name="fk_metric_observation_metric",
+            ["series_id"],
+            ["metrics.metric_series.series_id"],
         ),
-        schema="metrics",
-    )
-    op.create_index(
-        "ix_metric_observation_metric_time",
-        "metric_observation",
-        ["metric_id", "time_start_ts"],
-        unique=False,
-        schema="metrics",
-    )
-
-    op.create_table(
-        "metric_observation_dim",
-        sa.Column("observation_id", sa.BigInteger(), nullable=False),
-        sa.Column("dimension_id", sa.BigInteger(), nullable=False),
-        sa.Column("dimension_value", sa.String(length=256), nullable=False),
-        sa.ForeignKeyConstraint(
-            ["observation_id"],
-            ["metrics.metric_observation.observation_id"],
-            name="fk_metric_observation_dim_obs",
+        sa.CheckConstraint(
+            "time_end_ts IS NULL OR time_end_ts > time_start_ts",
+            name="ck_obs_time_range",
         ),
-        sa.ForeignKeyConstraint(
-            ["dimension_id"],
-            ["metrics.dimension_definition.dimension_id"],
-            name="fk_metric_observation_dim_dim",
+        sa.CheckConstraint(
+            "sample_size IS NULL OR sample_size >= 0",
+            name="ck_obs_sample_nonneg",
         ),
-        sa.PrimaryKeyConstraint("observation_id", "dimension_id"),
-        schema="metrics",
-    )
-    op.create_index(
-        "ix_metric_observation_dim_obs_dim_value",
-        "metric_observation_dim",
-        ["observation_id", "dimension_id", "dimension_value"],
-        unique=False,
+        sa.UniqueConstraint("series_id", "time_start_ts", name="uq_obs_series_time"),
         schema="metrics",
     )
 
 
-def downgrade():
-    op.drop_index(
-        "ix_metric_observation_dim_obs_dim_value",
-        table_name="metric_observation_dim",
-        schema="metrics",
-    )
-    op.drop_table("metric_observation_dim", schema="metrics")
-
-    op.drop_index(
-        "ix_metric_observation_metric_time",
-        table_name="metric_observation",
-        schema="metrics",
-    )
+def downgrade() -> None:
+    """Drop the metrics schema and core tables."""
     op.drop_table("metric_observation", schema="metrics")
-
-    op.drop_index(
-        "ix_dimension_definition_dimension_key",
-        table_name="dimension_definition",
-        schema="metrics",
-    )
+    op.drop_index("ix_metric_series_set_id", table_name="metric_series", schema="metrics")
+    op.drop_table("metric_series", schema="metrics")
+    op.drop_index("ix_dsv_value_set", table_name="dimension_set_value", schema="metrics")
+    op.drop_index("ix_dsv_dim_value_set", table_name="dimension_set_value", schema="metrics")
+    op.drop_table("dimension_set_value", schema="metrics")
+    op.drop_table("dimension_set", schema="metrics")
+    op.drop_table("dimension_value", schema="metrics")
+    op.execute(sa.text("DROP INDEX IF EXISTS metrics.ix_dimension_name_trgm"))
+    op.execute(sa.text("DROP INDEX IF EXISTS metrics.ix_dimension_key_trgm"))
     op.drop_table("dimension_definition", schema="metrics")
-
-    op.drop_index(
-        "ix_metric_definition_metric_key",
-        table_name="metric_definition",
-        schema="metrics",
-    )
+    op.execute(sa.text("DROP INDEX IF EXISTS metrics.ix_metric_name_trgm"))
+    op.execute(sa.text("DROP INDEX IF EXISTS metrics.ix_metric_key_trgm"))
     op.drop_table("metric_definition", schema="metrics")
-
     op.execute(sa.text("DROP SCHEMA IF EXISTS metrics"))

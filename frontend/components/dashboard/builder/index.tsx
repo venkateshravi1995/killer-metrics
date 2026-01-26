@@ -8,6 +8,7 @@ import {
   DeleteDashboardModal,
 } from "./modals"
 import { useDashboardBuilderState, type DashboardBuilderInitialData } from "./state"
+import { TopBar } from "@/components/top-bar"
 
 type DashboardBuilderProps = {
   initialData?: DashboardBuilderInitialData
@@ -73,6 +74,7 @@ export default function DashboardBuilder({ initialData }: DashboardBuilderProps)
 
   return (
     <div className="app-shell flex min-h-screen flex-col">
+      <TopBar />
       <DashboardHeader
         dashboards={dashboards}
         activeDashboardId={activeDashboardId}

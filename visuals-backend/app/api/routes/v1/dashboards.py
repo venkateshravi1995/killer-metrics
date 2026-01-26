@@ -1,3 +1,5 @@
+"""Dashboard CRUD endpoints."""
+
 from __future__ import annotations
 
 import base64
@@ -5,11 +7,12 @@ import binascii
 import json
 import uuid
 from copy import deepcopy
+from dataclasses import dataclass
 from datetime import datetime
+from typing import TYPE_CHECKING, Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
 from sqlalchemy import and_, func, or_, select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.db.schema import Dashboard, DashboardTile
@@ -24,6 +27,12 @@ from app.schemas.dashboards import (
     TileLayoutUpdate,
     TilePayload,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.sql.elements import ClauseElement
 
 router = APIRouter(prefix="/v1/dashboards", tags=["dashboards"])
 
@@ -41,8 +50,8 @@ def _decode_cursor(value: str | None) -> dict | None:
     try:
         raw = base64.urlsafe_b64decode(value.encode("utf-8"))
         parsed = json.loads(raw.decode("utf-8"))
-    except (ValueError, binascii.Error, json.JSONDecodeError):
-        raise HTTPException(status_code=400, detail="Invalid cursor.")
+    except (ValueError, binascii.Error, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=400, detail="Invalid cursor.") from exc
     if not isinstance(parsed, dict):
         raise HTTPException(status_code=400, detail="Invalid cursor.")
     return parsed
@@ -93,19 +102,39 @@ def _item_to_summary(item: Dashboard) -> DashboardSummary:
 
 
 def get_client_id(
-    x_client_id: str | None = Header(default=None, alias=settings.client_id_header),
-    x_user_id: str | None = Header(default=None, alias=settings.user_id_header),
+    x_client_id: Annotated[str | None, Header(alias=settings.client_id_header)] = None,
+    x_user_id: Annotated[str | None, Header(alias=settings.user_id_header)] = None,
 ) -> str:
+    """Resolve the client identifier from request headers."""
     value = (x_client_id or x_user_id or "1").strip()
     return value or "1"
 
 
 def get_user_id(
-    x_user_id: str | None = Header(default=None, alias=settings.user_id_header),
-    x_client_id: str | None = Header(default=None, alias=settings.client_id_header),
+    x_user_id: Annotated[str | None, Header(alias=settings.user_id_header)] = None,
+    x_client_id: Annotated[str | None, Header(alias=settings.client_id_header)] = None,
 ) -> str:
+    """Resolve the user identifier from request headers."""
     value = (x_user_id or x_client_id or "1").strip()
     return value or "1"
+
+
+@dataclass(frozen=True)
+class RequestContext:
+    """Shared request dependencies for dashboard routes."""
+
+    client_id: str
+    user_id: str
+    session: AsyncSession
+
+
+def get_request_context(
+    client_id: Annotated[str, Depends(get_client_id)],
+    user_id: Annotated[str, Depends(get_user_id)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> RequestContext:
+    """Build a request context from headers and session dependency."""
+    return RequestContext(client_id=client_id, user_id=user_id, session=session)
 
 
 async def _get_published_dashboard(
@@ -119,7 +148,7 @@ async def _get_published_dashboard(
             Dashboard.client_id == client_id,
             Dashboard.is_draft.is_(False),
             Dashboard.user_id == "",
-        )
+        ),
     )
     item = result.scalar_one_or_none()
     if item is None:
@@ -139,17 +168,17 @@ async def _get_draft_dashboard(
             Dashboard.user_id == user_id,
             Dashboard.client_id == client_id,
             Dashboard.is_draft.is_(True),
-        )
+        ),
     )
     return result.scalar_one_or_none()
 
 
 async def _fetch_tiles(
     session: AsyncSession,
-    filters,
+    filters: Sequence[ClauseElement],
 ) -> list[DashboardTile]:
     result = await session.execute(
-        select(DashboardTile).where(*filters).order_by(DashboardTile.position)
+        select(DashboardTile).where(*filters).order_by(DashboardTile.position),
     )
     return result.scalars().all()
 
@@ -190,21 +219,21 @@ async def _seed_draft(
 @router.post("", response_model=DashboardOut, status_code=status.HTTP_201_CREATED)
 async def create_dashboard(
     payload: DashboardCreate,
-    client_id: str = Depends(get_client_id),
-    session: AsyncSession = Depends(get_session),
+    context: Annotated[RequestContext, Depends(get_request_context)],
 ) -> DashboardOut:
+    """Create a new published dashboard."""
     dashboard_id = uuid.uuid4().hex
     tiles = _extract_tiles(payload.config)
-    async with session.begin():
+    async with context.session.begin():
         dashboard = Dashboard(
             id=dashboard_id,
-            client_id=client_id,
+            client_id=context.client_id,
             user_id="",
             is_draft=False,
             name=payload.name,
             description=payload.description,
         )
-        session.add(dashboard)
+        context.session.add(dashboard)
         if tiles:
             tile_rows = [
                 DashboardTile(
@@ -217,23 +246,23 @@ async def create_dashboard(
                 )
                 for index, tile in enumerate(tiles)
             ]
-            session.add_all(tile_rows)
-    await session.refresh(dashboard)
+            context.session.add_all(tile_rows)
+    await context.session.refresh(dashboard)
     return _item_to_dashboard(dashboard, tiles=tiles)
 
 
 @router.get("", response_model=DashboardList)
 async def list_dashboards(
-    limit: int = Query(50, ge=1, le=200),
-    cursor: str | None = Query(None),
-    client_id: str = Depends(get_client_id),
-    session: AsyncSession = Depends(get_session),
+    context: Annotated[RequestContext, Depends(get_request_context)],
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    cursor: Annotated[str | None, Query()] = None,
 ) -> DashboardList:
+    """List published dashboards with cursor pagination."""
     cursor_value = _decode_cursor(cursor)
     stmt = (
         select(Dashboard)
         .where(
-            Dashboard.client_id == client_id,
+            Dashboard.client_id == context.client_id,
             Dashboard.is_draft.is_(False),
             Dashboard.user_id == "",
         )
@@ -243,10 +272,12 @@ async def list_dashboards(
     if cursor_value:
         try:
             raw_updated = str(cursor_value["updated_at"])
-            cursor_updated = datetime.fromisoformat(raw_updated.replace("Z", "+00:00"))
+            if raw_updated.endswith("Z"):
+                raw_updated = raw_updated.removesuffix("Z") + "+00:00"
+            cursor_updated = datetime.fromisoformat(raw_updated)
             cursor_id = str(cursor_value["id"])
-        except (KeyError, ValueError):
-            raise HTTPException(status_code=400, detail="Invalid cursor.")
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail="Invalid cursor.") from exc
         stmt = stmt.where(
             or_(
                 Dashboard.updated_at < cursor_updated,
@@ -254,9 +285,9 @@ async def list_dashboards(
                     Dashboard.updated_at == cursor_updated,
                     Dashboard.id < cursor_id,
                 ),
-            )
+            ),
         )
-    result = await session.execute(stmt)
+    result = await context.session.execute(stmt)
     items = result.scalars().all()
     next_cursor = None
     if len(items) > limit:
@@ -266,7 +297,7 @@ async def list_dashboards(
             {
                 "updated_at": last.updated_at.isoformat(),
                 "id": last.id,
-            }
+            },
         )
     return DashboardList(
         items=[_item_to_summary(item) for item in items],
@@ -278,18 +309,22 @@ async def list_dashboards(
 @router.get("/{dashboard_id}", response_model=DashboardOut)
 async def get_dashboard(
     dashboard_id: str,
-    client_id: str = Depends(get_client_id),
-    user_id: str = Depends(get_user_id),
-    session: AsyncSession = Depends(get_session),
+    context: Annotated[RequestContext, Depends(get_request_context)],
 ) -> DashboardOut:
-    published = await _get_published_dashboard(session, dashboard_id, client_id)
-    draft = await _get_draft_dashboard(session, dashboard_id, user_id, client_id)
+    """Fetch a published dashboard or user draft."""
+    published = await _get_published_dashboard(context.session, dashboard_id, context.client_id)
+    draft = await _get_draft_dashboard(
+        context.session,
+        dashboard_id,
+        context.user_id,
+        context.client_id,
+    )
     if draft:
         draft_tiles = await _fetch_tiles(
-            session,
+            context.session,
             [
                 DashboardTile.dashboard_id == dashboard_id,
-                DashboardTile.user_id == user_id,
+                DashboardTile.user_id == context.user_id,
                 DashboardTile.is_draft.is_(True),
             ],
         )
@@ -300,7 +335,7 @@ async def get_dashboard(
             is_draft=True,
         )
     published_tiles = await _fetch_tiles(
-        session,
+        context.session,
         [
             DashboardTile.dashboard_id == dashboard_id,
             DashboardTile.user_id == "",
@@ -314,12 +349,16 @@ async def get_dashboard(
 async def update_dashboard(
     dashboard_id: str,
     payload: DashboardUpdate,
-    client_id: str = Depends(get_client_id),
-    session: AsyncSession = Depends(get_session),
+    context: Annotated[RequestContext, Depends(get_request_context)],
 ) -> DashboardOut:
+    """Update a published dashboard and its tiles."""
     tiles = _extract_tiles(payload.config)
-    async with session.begin():
-        published = await _get_published_dashboard(session, dashboard_id, client_id)
+    async with context.session.begin():
+        published = await _get_published_dashboard(
+            context.session,
+            dashboard_id,
+            context.client_id,
+        )
         published.name = payload.name
         published.description = payload.description
         published.updated_at = func.now()
@@ -336,7 +375,7 @@ async def update_dashboard(
                 )
                 for index, tile in enumerate(tiles)
             ]
-    await session.refresh(published)
+    await context.session.refresh(published)
     return _item_to_dashboard(published, tiles=tiles)
 
 
@@ -344,50 +383,64 @@ async def update_dashboard(
 async def add_tile_to_draft(
     dashboard_id: str,
     payload: TilePayload,
-    client_id: str = Depends(get_client_id),
-    user_id: str = Depends(get_user_id),
-    session: AsyncSession = Depends(get_session),
+    context: Annotated[RequestContext, Depends(get_request_context)],
 ) -> Response:
-    async with session.begin():
-        published = await _get_published_dashboard(session, dashboard_id, client_id)
-        draft = await _get_draft_dashboard(session, dashboard_id, user_id, client_id)
+    """Add a tile to the user's draft dashboard."""
+    async with context.session.begin():
+        published = await _get_published_dashboard(
+            context.session,
+            dashboard_id,
+            context.client_id,
+        )
+        draft = await _get_draft_dashboard(
+            context.session,
+            dashboard_id,
+            context.user_id,
+            context.client_id,
+        )
         if not draft:
             published_tiles = await _fetch_tiles(
-                session,
+                context.session,
                 [
                     DashboardTile.dashboard_id == dashboard_id,
                     DashboardTile.user_id == "",
                     DashboardTile.is_draft.is_(False),
                 ],
             )
-            draft = await _seed_draft(session, published, published_tiles, user_id, client_id)
-        exists = await session.execute(
+            draft = await _seed_draft(
+                context.session,
+                published,
+                published_tiles,
+                context.user_id,
+                context.client_id,
+            )
+        exists = await context.session.execute(
             select(DashboardTile.tile_id).where(
                 DashboardTile.dashboard_id == dashboard_id,
-                DashboardTile.user_id == user_id,
+                DashboardTile.user_id == context.user_id,
                 DashboardTile.is_draft.is_(True),
                 DashboardTile.tile_id == payload.id,
-            )
+            ),
         )
         if exists.first():
             raise HTTPException(status_code=409, detail="Tile already exists.")
-        max_position = await session.execute(
+        max_position = await context.session.execute(
             select(func.coalesce(func.max(DashboardTile.position), -1)).where(
                 DashboardTile.dashboard_id == dashboard_id,
-                DashboardTile.user_id == user_id,
+                DashboardTile.user_id == context.user_id,
                 DashboardTile.is_draft.is_(True),
-            )
+            ),
         )
         position = max_position.scalar_one() + 1
-        session.add(
+        context.session.add(
             DashboardTile(
                 dashboard_id=dashboard_id,
-                user_id=user_id,
+                user_id=context.user_id,
                 is_draft=True,
                 tile_id=payload.id,
                 position=position,
                 config=payload.model_dump(),
-            )
+            ),
         )
         draft.updated_at = func.now()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -401,32 +454,46 @@ async def update_tile_in_draft(
     dashboard_id: str,
     tile_id: str,
     payload: TilePayload,
-    client_id: str = Depends(get_client_id),
-    user_id: str = Depends(get_user_id),
-    session: AsyncSession = Depends(get_session),
+    context: Annotated[RequestContext, Depends(get_request_context)],
 ) -> Response:
+    """Update a tile configuration in the user's draft."""
     if payload.id != tile_id:
         raise HTTPException(status_code=400, detail="Tile id mismatch.")
-    async with session.begin():
-        published = await _get_published_dashboard(session, dashboard_id, client_id)
-        draft = await _get_draft_dashboard(session, dashboard_id, user_id, client_id)
+    async with context.session.begin():
+        published = await _get_published_dashboard(
+            context.session,
+            dashboard_id,
+            context.client_id,
+        )
+        draft = await _get_draft_dashboard(
+            context.session,
+            dashboard_id,
+            context.user_id,
+            context.client_id,
+        )
         if not draft:
             published_tiles = await _fetch_tiles(
-                session,
+                context.session,
                 [
                     DashboardTile.dashboard_id == dashboard_id,
                     DashboardTile.user_id == "",
                     DashboardTile.is_draft.is_(False),
                 ],
             )
-            draft = await _seed_draft(session, published, published_tiles, user_id, client_id)
-        result = await session.execute(
+            draft = await _seed_draft(
+                context.session,
+                published,
+                published_tiles,
+                context.user_id,
+                context.client_id,
+            )
+        result = await context.session.execute(
             select(DashboardTile).where(
                 DashboardTile.dashboard_id == dashboard_id,
-                DashboardTile.user_id == user_id,
+                DashboardTile.user_id == context.user_id,
                 DashboardTile.is_draft.is_(True),
                 DashboardTile.tile_id == tile_id,
-            )
+            ),
         )
         tile = result.scalar_one_or_none()
         if tile is None:
@@ -445,16 +512,24 @@ async def update_tile_in_draft(
 async def delete_tile_from_draft(
     dashboard_id: str,
     tile_id: str,
-    client_id: str = Depends(get_client_id),
-    user_id: str = Depends(get_user_id),
-    session: AsyncSession = Depends(get_session),
+    context: Annotated[RequestContext, Depends(get_request_context)],
 ) -> Response:
-    async with session.begin():
-        published = await _get_published_dashboard(session, dashboard_id, client_id)
-        draft = await _get_draft_dashboard(session, dashboard_id, user_id, client_id)
+    """Delete a tile from the user's draft dashboard."""
+    async with context.session.begin():
+        published = await _get_published_dashboard(
+            context.session,
+            dashboard_id,
+            context.client_id,
+        )
+        draft = await _get_draft_dashboard(
+            context.session,
+            dashboard_id,
+            context.user_id,
+            context.client_id,
+        )
         if not draft:
             published_tiles = await _fetch_tiles(
-                session,
+                context.session,
                 [
                     DashboardTile.dashboard_id == dashboard_id,
                     DashboardTile.user_id == "",
@@ -463,19 +538,25 @@ async def delete_tile_from_draft(
             )
             if not any(tile.tile_id == tile_id for tile in published_tiles):
                 raise HTTPException(status_code=404, detail="Tile not found.")
-            draft = await _seed_draft(session, published, published_tiles, user_id, client_id)
-        result = await session.execute(
+            draft = await _seed_draft(
+                context.session,
+                published,
+                published_tiles,
+                context.user_id,
+                context.client_id,
+            )
+        result = await context.session.execute(
             select(DashboardTile).where(
                 DashboardTile.dashboard_id == dashboard_id,
-                DashboardTile.user_id == user_id,
+                DashboardTile.user_id == context.user_id,
                 DashboardTile.is_draft.is_(True),
                 DashboardTile.tile_id == tile_id,
-            )
+            ),
         )
         tile = result.scalar_one_or_none()
         if tile is None:
             raise HTTPException(status_code=404, detail="Tile not found.")
-        await session.delete(tile)
+        await context.session.delete(tile)
         draft.updated_at = func.now()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -484,33 +565,47 @@ async def delete_tile_from_draft(
 async def update_draft_layout(
     dashboard_id: str,
     payload: TileLayoutUpdate,
-    client_id: str = Depends(get_client_id),
-    user_id: str = Depends(get_user_id),
-    session: AsyncSession = Depends(get_session),
+    context: Annotated[RequestContext, Depends(get_request_context)],
 ) -> Response:
-    async with session.begin():
-        published = await _get_published_dashboard(session, dashboard_id, client_id)
-        draft = await _get_draft_dashboard(session, dashboard_id, user_id, client_id)
+    """Update tile layouts within a draft dashboard."""
+    async with context.session.begin():
+        published = await _get_published_dashboard(
+            context.session,
+            dashboard_id,
+            context.client_id,
+        )
+        draft = await _get_draft_dashboard(
+            context.session,
+            dashboard_id,
+            context.user_id,
+            context.client_id,
+        )
         if not draft:
             published_tiles = await _fetch_tiles(
-                session,
+                context.session,
                 [
                     DashboardTile.dashboard_id == dashboard_id,
                     DashboardTile.user_id == "",
                     DashboardTile.is_draft.is_(False),
                 ],
             )
-            draft = await _seed_draft(session, published, published_tiles, user_id, client_id)
+            draft = await _seed_draft(
+                context.session,
+                published,
+                published_tiles,
+                context.user_id,
+                context.client_id,
+            )
         tile_ids = [item.id for item in payload.items]
         if not tile_ids:
             return Response(status_code=status.HTTP_204_NO_CONTENT)
-        result = await session.execute(
+        result = await context.session.execute(
             select(DashboardTile).where(
                 DashboardTile.dashboard_id == dashboard_id,
-                DashboardTile.user_id == user_id,
+                DashboardTile.user_id == context.user_id,
                 DashboardTile.is_draft.is_(True),
                 DashboardTile.tile_id.in_(tile_ids),
-            )
+            ),
         )
         rows = {row.tile_id: row for row in result.scalars().all()}
         missing = [tile_id for tile_id in tile_ids if tile_id not in rows]
@@ -534,26 +629,40 @@ async def update_draft_layout(
 async def update_draft_metadata(
     dashboard_id: str,
     payload: DashboardMetadataUpdate,
-    client_id: str = Depends(get_client_id),
-    user_id: str = Depends(get_user_id),
-    session: AsyncSession = Depends(get_session),
+    context: Annotated[RequestContext, Depends(get_request_context)],
 ) -> Response:
+    """Update draft dashboard metadata."""
     fields_set = payload.model_fields_set
     if not fields_set:
         raise HTTPException(status_code=400, detail="No metadata updates provided.")
-    async with session.begin():
-        published = await _get_published_dashboard(session, dashboard_id, client_id)
-        draft = await _get_draft_dashboard(session, dashboard_id, user_id, client_id)
+    async with context.session.begin():
+        published = await _get_published_dashboard(
+            context.session,
+            dashboard_id,
+            context.client_id,
+        )
+        draft = await _get_draft_dashboard(
+            context.session,
+            dashboard_id,
+            context.user_id,
+            context.client_id,
+        )
         if not draft:
             published_tiles = await _fetch_tiles(
-                session,
+                context.session,
                 [
                     DashboardTile.dashboard_id == dashboard_id,
                     DashboardTile.user_id == "",
                     DashboardTile.is_draft.is_(False),
                 ],
             )
-            draft = await _seed_draft(session, published, published_tiles, user_id, client_id)
+            draft = await _seed_draft(
+                context.session,
+                published,
+                published_tiles,
+                context.user_id,
+                context.client_id,
+            )
         name = draft.name
         description = draft.description
         if "name" in fields_set:
@@ -571,20 +680,28 @@ async def update_draft_metadata(
 @router.post("/{dashboard_id}/draft/commit", response_model=DashboardOut)
 async def commit_draft(
     dashboard_id: str,
-    client_id: str = Depends(get_client_id),
-    user_id: str = Depends(get_user_id),
-    session: AsyncSession = Depends(get_session),
+    context: Annotated[RequestContext, Depends(get_request_context)],
 ) -> DashboardOut:
-    async with session.begin():
-        published = await _get_published_dashboard(session, dashboard_id, client_id)
-        draft = await _get_draft_dashboard(session, dashboard_id, user_id, client_id)
+    """Publish the user's draft dashboard."""
+    async with context.session.begin():
+        published = await _get_published_dashboard(
+            context.session,
+            dashboard_id,
+            context.client_id,
+        )
+        draft = await _get_draft_dashboard(
+            context.session,
+            dashboard_id,
+            context.user_id,
+            context.client_id,
+        )
         if not draft:
             raise HTTPException(status_code=404, detail="Draft not found.")
         draft_tiles = await _fetch_tiles(
-            session,
+            context.session,
             [
                 DashboardTile.dashboard_id == dashboard_id,
-                DashboardTile.user_id == user_id,
+                DashboardTile.user_id == context.user_id,
                 DashboardTile.is_draft.is_(True),
             ],
         )
@@ -603,8 +720,8 @@ async def commit_draft(
             )
             for tile in draft_tiles
         ]
-        await session.delete(draft)
-    await session.refresh(published)
+        await context.session.delete(draft)
+    await context.session.refresh(published)
     return _item_to_dashboard(
         published,
         tiles=_tiles_from_rows(draft_tiles),
@@ -614,41 +731,40 @@ async def commit_draft(
 @router.delete("/{dashboard_id}/draft", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_draft(
     dashboard_id: str,
-    client_id: str = Depends(get_client_id),
-    user_id: str = Depends(get_user_id),
-    session: AsyncSession = Depends(get_session),
+    context: Annotated[RequestContext, Depends(get_request_context)],
 ) -> Response:
-    async with session.begin():
-        result = await session.execute(
+    """Delete the user's draft dashboard."""
+    async with context.session.begin():
+        result = await context.session.execute(
             select(Dashboard).where(
                 Dashboard.id == dashboard_id,
-                Dashboard.user_id == user_id,
-                Dashboard.client_id == client_id,
+                Dashboard.user_id == context.user_id,
+                Dashboard.client_id == context.client_id,
                 Dashboard.is_draft.is_(True),
-            )
+            ),
         )
         draft = result.scalar_one_or_none()
         if draft:
-            await session.delete(draft)
+            await context.session.delete(draft)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.delete("/{dashboard_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_dashboard(
     dashboard_id: str,
-    client_id: str = Depends(get_client_id),
-    session: AsyncSession = Depends(get_session),
+    context: Annotated[RequestContext, Depends(get_request_context)],
 ) -> Response:
-    async with session.begin():
-        result = await session.execute(
+    """Delete a published dashboard and related tiles."""
+    async with context.session.begin():
+        result = await context.session.execute(
             select(Dashboard).where(
                 Dashboard.id == dashboard_id,
-                Dashboard.client_id == client_id,
-            )
+                Dashboard.client_id == context.client_id,
+            ),
         )
         dashboards_to_delete = result.scalars().all()
         if not dashboards_to_delete:
             raise HTTPException(status_code=404, detail="Dashboard not found.")
         for dashboard in dashboards_to_delete:
-            await session.delete(dashboard)
+            await context.session.delete(dashboard)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -1,3 +1,5 @@
+"""SQLAlchemy models for the visuals backend."""
+
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
@@ -16,17 +18,22 @@ from sqlalchemy.orm import declarative_base, relationship
 
 
 class BaseModel:
+    """Base model with shared helpers."""
+
     __abstract__ = True
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, object]:
+        """Convert a model instance into a simple dict."""
         return {column.name: getattr(self, column.name) for column in self.__table__.columns}
 
 
-Base = declarative_base(metadata=MetaData(), cls=BaseModel)
+Base = declarative_base(metadata=MetaData(schema="visuals-backend"), cls=BaseModel)
 metadata = Base.metadata
 
 
 class Dashboard(Base):
+    """Dashboard metadata and draft flag."""
+
     __tablename__ = "dashboards"
 
     id = Column(String(32), primary_key=True)
@@ -65,6 +72,8 @@ class Dashboard(Base):
 
 
 class DashboardTile(Base):
+    """Tile metadata for dashboards."""
+
     __tablename__ = "dashboard_tiles"
 
     dashboard_id = Column(String(32), primary_key=True)

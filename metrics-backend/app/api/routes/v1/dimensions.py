@@ -1,11 +1,14 @@
-from datetime import datetime
+"""Dimension catalog endpoints."""
+
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import select
-from app.api.routes.v1.utils import set_cache_control
 
-from app.db.postgres import PostgresExecutor
+from app.api.routes.v1.utils import set_cache_control
+from app.api.schemas.dimensions import DimensionValuesQuery
 from app.db.helpers import apply_pagination, resolve_dimension_ids, resolve_metric_id
+from app.db.postgres import PostgresExecutor
 from app.db.schema import (
     DimensionDefinition,
     DimensionSetValue,
@@ -21,11 +24,13 @@ router = APIRouter(prefix="/v1/dimensions", tags=["dimensions"])
 @router.get("")
 async def list_dimensions(
     response: Response,
-    is_active: bool | None = Query(True),
-    limit: int = Query(500, ge=1, le=5000),
-    offset: int = Query(0, ge=0),
-    connection: PostgresExecutor = Depends(get_connection),
+    *,
+    is_active: Annotated[bool | None, Query()] = True,
+    limit: Annotated[int, Query(ge=1, le=5000)] = 500,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    connection: Annotated[PostgresExecutor, Depends(get_connection)],
 ) -> dict:
+    """List available dimensions."""
     set_cache_control(response)
     stmt = select(DimensionDefinition).order_by(DimensionDefinition.dimension_key)
     if is_active is not None:
@@ -40,8 +45,9 @@ async def list_dimensions(
 async def get_dimension(
     dimension_key: str,
     response: Response,
-    connection: PostgresExecutor = Depends(get_connection),
+    connection: Annotated[PostgresExecutor, Depends(get_connection)],
 ) -> dict:
+    """Fetch a single dimension by key."""
     set_cache_control(response)
     stmt = select(DimensionDefinition).where(DimensionDefinition.dimension_key == dimension_key)
     result = await connection.execute(stmt)
@@ -55,13 +61,10 @@ async def get_dimension(
 async def get_dimension_values(
     dimension_key: str,
     response: Response,
-    metric_key: str | None = Query(None),
-    start_time: datetime | None = Query(None),
-    end_time: datetime | None = Query(None),
-    limit: int = Query(500, ge=1, le=5000),
-    offset: int = Query(0, ge=0),
-    connection: PostgresExecutor = Depends(get_connection),
+    filters: Annotated[DimensionValuesQuery, Depends()],
+    connection: Annotated[PostgresExecutor, Depends(get_connection)],
 ) -> dict:
+    """List dimension values, optionally scoped by metric and time range."""
     set_cache_control(response)
     dimension_ids = await resolve_dimension_ids(connection, [dimension_key])
     dimension_id = dimension_ids[dimension_key]
@@ -69,7 +72,7 @@ async def get_dimension_values(
     stmt = select(DimensionValue.value.label("dimension_value")).distinct()
     stmt = stmt.where(DimensionValue.dimension_id == dimension_id)
 
-    if metric_key or start_time or end_time:
+    if filters.metric_key or filters.start_time or filters.end_time:
         stmt = stmt.join(
             DimensionSetValue,
             DimensionSetValue.value_id == DimensionValue.value_id,
@@ -81,23 +84,23 @@ async def get_dimension_values(
             MetricObservation.series_id == MetricSeries.series_id,
         )
 
-    if metric_key:
-        metric_id = await resolve_metric_id(connection, metric_key)
+    if filters.metric_key:
+        metric_id = await resolve_metric_id(connection, filters.metric_key)
         stmt = stmt.where(MetricSeries.metric_id == metric_id)
 
-    if start_time:
-        stmt = stmt.where(MetricObservation.time_start_ts >= start_time)
-    if end_time:
-        stmt = stmt.where(MetricObservation.time_start_ts < end_time)
+    if filters.start_time:
+        stmt = stmt.where(MetricObservation.time_start_ts >= filters.start_time)
+    if filters.end_time:
+        stmt = stmt.where(MetricObservation.time_start_ts < filters.end_time)
 
     stmt = stmt.order_by(DimensionValue.value)
-    stmt = apply_pagination(stmt, limit, offset)
+    stmt = apply_pagination(stmt, filters.limit, filters.offset)
 
     result = await connection.execute(stmt)
     rows = result.scalars().all()
     return {
         "dimension_key": dimension_key,
         "items": rows,
-        "limit": limit,
-        "offset": offset,
+        "limit": filters.limit,
+        "offset": filters.offset,
     }

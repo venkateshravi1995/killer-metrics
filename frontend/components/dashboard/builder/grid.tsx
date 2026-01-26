@@ -144,7 +144,7 @@ export function DashboardGrid({
       </main>
 
       {editMode && !isCompactView ? (
-        <aside className="flex min-h-0 w-full flex-col md:sticky md:top-6 md:self-start md:h-[calc(100vh-6rem)] md:w-72 lg:w-80 xl:w-96">
+        <aside className="flex min-h-0 w-full flex-col md:sticky md:top-24 md:self-start md:h-[calc(100vh-6rem)] md:w-72 lg:w-80 xl:w-96">
           <Card className="flex h-full min-h-0 flex-col overflow-hidden border-border/60 bg-card/70 p-3 shadow-md">
             <div className="flex items-start justify-between gap-3">
               <div>
