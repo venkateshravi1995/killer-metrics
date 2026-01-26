@@ -1,14 +1,14 @@
-"""create dashboard tables
+"""Create dashboard tables.
 
 Revision ID: 0001_create_dashboard_tables
-Revises: 
+Revises:
 Create Date: 2024-06-01 00:00:00.000000
 """
 
-from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "0001_create_dashboard_tables"
@@ -16,8 +16,12 @@ down_revision = None
 branch_labels = None
 depends_on = None
 
+SCHEMA_NAME = "visuals-backend"
+
 
 def upgrade() -> None:
+    """Create dashboard tables and indexes."""
+    op.execute(sa.text(f'CREATE SCHEMA IF NOT EXISTS "{SCHEMA_NAME}"'))
     op.create_table(
         "dashboards",
         sa.Column("id", sa.String(length=32), nullable=False),
@@ -43,11 +47,13 @@ def upgrade() -> None:
             "(is_draft = true AND user_id <> '') OR (is_draft = false AND user_id = '')",
             name="ck_dashboards_draft_user",
         ),
+        schema=SCHEMA_NAME,
     )
     op.create_index(
         "ix_dashboards_client_updated",
         "dashboards",
         ["client_id", "is_draft", "updated_at", "id"],
+        schema=SCHEMA_NAME,
     )
 
     op.create_table(
@@ -76,20 +82,36 @@ def upgrade() -> None:
         ),
         sa.ForeignKeyConstraint(
             ["dashboard_id", "user_id", "is_draft"],
-            ["dashboards.id", "dashboards.user_id", "dashboards.is_draft"],
+            [
+                f"{SCHEMA_NAME}.dashboards.id",
+                f"{SCHEMA_NAME}.dashboards.user_id",
+                f"{SCHEMA_NAME}.dashboards.is_draft",
+            ],
             ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("dashboard_id", "user_id", "is_draft", "tile_id"),
+        schema=SCHEMA_NAME,
     )
     op.create_index(
         "ix_dashboard_tiles_dashboard_position",
         "dashboard_tiles",
         ["dashboard_id", "user_id", "is_draft", "position"],
+        schema=SCHEMA_NAME,
     )
 
 
 def downgrade() -> None:
-    op.drop_index("ix_dashboard_tiles_dashboard_position", table_name="dashboard_tiles")
-    op.drop_table("dashboard_tiles")
-    op.drop_index("ix_dashboards_client_updated", table_name="dashboards")
-    op.drop_table("dashboards")
+    """Drop dashboard tables and indexes."""
+    op.drop_index(
+        "ix_dashboard_tiles_dashboard_position",
+        table_name="dashboard_tiles",
+        schema=SCHEMA_NAME,
+    )
+    op.drop_table("dashboard_tiles", schema=SCHEMA_NAME)
+    op.drop_index(
+        "ix_dashboards_client_updated",
+        table_name="dashboards",
+        schema=SCHEMA_NAME,
+    )
+    op.drop_table("dashboards", schema=SCHEMA_NAME)
+    op.execute(sa.text(f'DROP SCHEMA IF EXISTS "{SCHEMA_NAME}"'))

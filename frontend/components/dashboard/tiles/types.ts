@@ -50,6 +50,14 @@ export type TileVisualOptions = {
   donutOuterRadius?: boolean
   donutSlicePadding?: boolean
   kpiDeltaMode?: boolean
+  kpiValueMode?: boolean
+  kpiSecondaryValue?: boolean
+  kpiDeltaBasis?: boolean
+  kpiShowDelta?: boolean
+  kpiDeltaStyle?: boolean
+  kpiShowLabel?: boolean
+  kpiAlignment?: boolean
+  kpiValueSize?: boolean
 }
 
 export type TileDefinition = {

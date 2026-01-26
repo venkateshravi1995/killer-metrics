@@ -17,6 +17,7 @@ import {
   createDashboard,
   createDraftTile,
   deleteDashboard,
+  deleteDraft,
   deleteDraftTile,
   fetchDashboard,
   fetchDashboards,
@@ -99,6 +100,7 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
   )
   const [draftStatus, setDraftStatus] = useState<DraftStatus>("idle")
   const [draftError, setDraftError] = useState<string | null>(null)
+  const [refreshIntervalMs, setRefreshIntervalMs] = useState<number | null>(null)
   const [seriesByTileId, setSeriesByTileId] = useState<
     Record<string, SeriesDefinition[]>
   >({})
@@ -123,6 +125,8 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
   )
   const activeBreakpointRef = useRef<BreakpointKey>(activeBreakpoint)
   const activeDashboardIdRef = useRef<string | null>(activeDashboardId)
+  const dashboardStatusRef = useRef(dashboardStatus)
+  const draftStatusRef = useRef(draftStatus)
   const tilesRef = useRef<TileConfig[]>([])
   const draftInFlightRef = useRef(0)
   const metadataRef = useRef({ name: dashboardName, description: dashboardDescription })
@@ -153,14 +157,16 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
   }, [activeDashboardId])
 
   useEffect(() => {
-    tilesRef.current = tiles
-  }, [tiles])
+    dashboardStatusRef.current = dashboardStatus
+  }, [dashboardStatus])
 
   useEffect(() => {
-    if (!isCompactView) {
-      setConfiguratorOpen(false)
-    }
-  }, [isCompactView])
+    draftStatusRef.current = draftStatus
+  }, [draftStatus])
+
+  useEffect(() => {
+    tilesRef.current = tiles
+  }, [tiles])
 
   useEffect(() => {
     if (!editMode) {
@@ -300,6 +306,34 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
     }
   }, [applyDashboardMetadata, dashboardApiBaseUrl, loadDashboard])
 
+  const performRefresh = useCallback(() => {
+    setDashboardError(null)
+    const dashboardId = activeDashboardIdRef.current
+    if (dashboardId) {
+      void loadDashboard(dashboardId)
+      return
+    }
+    void refreshDashboards()
+  }, [loadDashboard, refreshDashboards])
+
+  useEffect(() => {
+    if (!refreshIntervalMs) {
+      return
+    }
+    const intervalId = setInterval(() => {
+      const status = dashboardStatusRef.current
+      if (
+        status === "loading" ||
+        status === "saving" ||
+        draftStatusRef.current === "saving"
+      ) {
+        return
+      }
+      performRefresh()
+    }, refreshIntervalMs)
+    return () => clearInterval(intervalId)
+  }, [performRefresh, refreshIntervalMs])
+
   useEffect(() => {
     if (cacheHydratedRef.current) {
       return
@@ -316,7 +350,7 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
       if (cached.current) {
         applyDashboardMetadata(cached.current.name, cached.current.description)
         setHasDraft(Boolean(cached.current.hasDraft))
-        setEditMode(cached.current.editMode ?? true)
+        setEditMode(true)
         const normalizedTiles = cached.current.tiles.map((tile) =>
           normalizeTileConfig(tile)
         )
@@ -697,12 +731,7 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
   }
 
   const handleRefreshDashboard = () => {
-    setDashboardError(null)
-    if (activeDashboardId) {
-      void loadDashboard(activeDashboardId)
-      return
-    }
-    void refreshDashboards()
+    performRefresh()
   }
 
   const openCreateModal = () => {
@@ -720,17 +749,7 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
   const handleConfigureTile = (tileId: string) => {
     setDashboardError(null)
     setSelectedTileId(tileId)
-    if (isCompactView) {
-      setConfiguratorOpen(true)
-      return
-    }
-    if (typeof document === "undefined") {
-      return
-    }
-    const tileElement = document.querySelector(`[data-tile-id="${tileId}"]`)
-    if (tileElement instanceof HTMLElement) {
-      tileElement.scrollIntoView({ behavior: "smooth", block: "center" })
-    }
+    setConfiguratorOpen(true)
   }
 
   const openDeleteModal = () => {
@@ -783,6 +802,32 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Failed to save dashboard."
+      setDashboardStatus("error")
+      setDashboardError(message)
+    }
+  }
+
+  const handleDiscardDraft = async () => {
+    if (!activeDashboardId) {
+      setDashboardStatus("error")
+      setDashboardError("Select a dashboard to undo changes.")
+      return
+    }
+    if (!hasDraft) {
+      setDashboardStatus("error")
+      setDashboardError("No draft changes to undo.")
+      return
+    }
+    setDashboardStatus("loading")
+    setDashboardError(null)
+    setDraftError(null)
+    setConfiguratorOpen(false)
+    try {
+      await deleteDraft(dashboardApiBaseUrl, activeDashboardId)
+      await loadDashboard(activeDashboardId)
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to discard draft."
       setDashboardStatus("error")
       setDashboardError(message)
     }
@@ -868,6 +913,7 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
     hasDraft,
     draftStatus,
     draftError,
+    refreshIntervalMs,
     seriesByTileId,
     isRenaming,
     createModalOpen,
@@ -894,6 +940,7 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
     setCreateModalOpen,
     setDeleteModalOpen,
     setConfiguratorOpen,
+    setRefreshIntervalMs,
     addTile,
     duplicateTile,
     removeTile,
@@ -905,6 +952,7 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
     openDeleteModal,
     closeDeleteModal,
     handleSaveDashboard,
+    handleDiscardDraft,
     handleDeleteDashboard,
     handleCreateDashboard,
     toggleEditMode,

@@ -140,12 +140,33 @@
   }
 }
 
+@keyframes vibrate {
+  0% {
+    transform: translate(0);
+  }
+  20% {
+    transform: translate(-1px, 1px);
+  }
+  40% {
+    transform: translate(1px, -1px);
+  }
+  60% {
+    transform: translate(-1px, -1px);
+  }
+  80% {
+    transform: translate(1px, 1px);
+  }
+  100% {
+    transform: translate(0);
+  }
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
   }
   body {
-    @apply bg-background text-foreground font-sans antialiased;
+    @apply bg-background text-foreground font-sans antialiased transition-colors duration-300;
   }
 }
 
@@ -157,9 +178,19 @@
   .app-shell {
     min-height: 100vh;
     background:
-      radial-gradient(circle at 8% 20%, rgba(255, 204, 160, 0.35), transparent 48%),
-      radial-gradient(circle at 90% 0%, rgba(125, 220, 210, 0.32), transparent 45%),
-      linear-gradient(180deg, #f8f6ef 0%, #eef2f7 45%, #f6f2ea 100%);
+      radial-gradient(circle at 12% 18%, rgba(255, 200, 150, 0.45), transparent 45%),
+      radial-gradient(circle at 88% 6%, rgba(120, 220, 210, 0.35), transparent 50%),
+      radial-gradient(circle at 70% 75%, rgba(205, 245, 210, 0.3), transparent 55%),
+      linear-gradient(180deg, #faf7ef 0%, #eef3f8 45%, #f7f3ea 100%);
+    transition: background 0.35s ease;
+  }
+
+  .dark .app-shell {
+    background:
+      radial-gradient(circle at 12% 18%, rgba(255, 141, 82, 0.18), transparent 45%),
+      radial-gradient(circle at 88% 6%, rgba(54, 199, 192, 0.18), transparent 50%),
+      radial-gradient(circle at 70% 75%, rgba(24, 142, 110, 0.18), transparent 55%),
+      linear-gradient(180deg, #0b111c 0%, #0e1626 45%, #111827 100%);
   }
 
   .canvas-grid {
@@ -168,6 +199,44 @@
       radial-gradient(rgba(15, 23, 42, 0.08) 1px, transparent 1px);
     background-size: 240px 240px, 18px 18px;
     background-position: 0 0, -1px -1px;
+  }
+
+  .dark .canvas-grid {
+    background-image:
+      linear-gradient(135deg, rgba(226, 232, 240, 0.08), rgba(15, 23, 42, 0) 42%),
+      radial-gradient(rgba(226, 232, 240, 0.12) 1px, transparent 1px);
+  }
+
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 40;
+    width: 100%;
+    border-bottom: 1px solid var(--border);
+    background:
+      radial-gradient(circle at 15% 30%, rgba(255, 200, 150, 0.22), transparent 48%),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.76));
+    backdrop-filter: blur(16px);
+    transition:
+      background 0.35s ease,
+      border-color 0.35s ease;
+  }
+
+  .topbar-fixed {
+    position: fixed;
+    left: 0;
+    right: 0;
+  }
+
+  .topbar-spacer {
+    height: var(--topbar-height, 48px);
+  }
+
+  .dark .topbar {
+    border-bottom-color: rgba(255, 255, 255, 0.08);
+    background:
+      radial-gradient(circle at 15% 30%, rgba(255, 141, 82, 0.14), transparent 48%),
+      linear-gradient(90deg, rgba(10, 15, 26, 0.92), rgba(15, 23, 42, 0.78));
   }
 
   .tile-card {
@@ -234,5 +303,16 @@
 
   .animate-float {
     animation: float 6s ease-in-out infinite;
+  }
+
+  .animate-vibrate {
+    animation: vibrate 0.3s linear infinite;
+    will-change: transform;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .animate-vibrate {
+      animation: none;
+    }
   }
 }

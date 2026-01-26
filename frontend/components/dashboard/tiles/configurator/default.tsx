@@ -145,19 +145,34 @@ export function DefaultTileConfigurator({
     (dataSource === "timeseries" || tileDefinition.type === "kpi")
   const palette = getPalette(tile.palette)
   const hasSeriesOverrides = Object.keys(tile.seriesColors).length > 0
+  const kpiValueMode = tile.kpiValueMode ?? "current"
+  const kpiSecondaryValue = tile.kpiSecondaryValue ?? "none"
+  const kpiDeltaMode = tile.kpiDeltaMode ?? "percent"
+  const kpiDeltaBasis = tile.kpiDeltaBasis ?? "previous"
+  const kpiShowDelta = tile.kpiShowDelta ?? true
+  const kpiDeltaStyle = tile.kpiDeltaStyle ?? "badge"
+  const kpiShowLabel = tile.kpiShowLabel ?? true
+  const kpiAlignment = tile.kpiAlignment ?? "left"
+  const kpiValueSize = tile.kpiValueSize ?? "lg"
+  const comparisonLabel =
+    tileDefinition.type === "kpi" ? "Sparkline" : "Comparison overlay"
 
   return (
     <Tabs
       value={activeTab}
       onValueChange={(value) => onTabChange(value as "data" | "visuals")}
-      className="flex flex-1 min-h-0 flex-col"
+      className="flex flex-1 min-h-0 flex-col gap-1"
     >
-      <TabsList className="grid h-9 grid-cols-2">
-        <TabsTrigger value="data">Data</TabsTrigger>
-        <TabsTrigger value="visuals">Visuals</TabsTrigger>
+      <TabsList className="grid h-8 grid-cols-2">
+        <TabsTrigger value="data" className="text-xs">
+          Data
+        </TabsTrigger>
+        <TabsTrigger value="visuals" className="text-xs">
+          Visuals
+        </TabsTrigger>
       </TabsList>
-      <ScrollArea className="mt-2 flex-1 min-h-0 pr-1">
-        <TabsContent value="data" className="space-y-3">
+      <ScrollArea className="mt-1 flex-1 min-h-0 pr-1">
+        <TabsContent value="data" className="space-y-2">
           <div className={sectionClass}>
             <div>
               <Label className="text-sm">Chart</Label>
@@ -591,7 +606,7 @@ export function DefaultTileConfigurator({
           </div>
         </TabsContent>
 
-        <TabsContent value="visuals" className="space-y-3">
+        <TabsContent value="visuals" className="space-y-2">
           {visualOptions.seriesColors ? (
             <div className={sectionClass}>
               <div>
@@ -909,7 +924,7 @@ export function DefaultTileConfigurator({
                   ) : null}
                   {visualOptions.showComparison && canCompare ? (
                     <label className="flex items-center justify-between text-sm">
-                      <span>Comparison overlay</span>
+                      <span>{comparisonLabel}</span>
                       <Switch
                         checked={tile.showComparison}
                         onCheckedChange={(value) =>
@@ -1050,34 +1065,202 @@ export function DefaultTileConfigurator({
             </div>
           ) : null}
 
-          {visualOptions.kpiDeltaMode ? (
+          {visualOptions.kpiDeltaMode ||
+          visualOptions.kpiValueMode ||
+          visualOptions.kpiSecondaryValue ||
+          visualOptions.kpiDeltaBasis ||
+          visualOptions.kpiShowDelta ||
+          visualOptions.kpiDeltaStyle ||
+          visualOptions.kpiShowLabel ||
+          visualOptions.kpiAlignment ||
+          visualOptions.kpiValueSize ? (
             <div className={sectionClass}>
               <div>
                 <Label className="text-sm">KPI</Label>
                 <p className="text-xs text-muted-foreground">
-                  Choose how deltas appear in the tile.
+                  Tune the KPI content and layout.
                 </p>
               </div>
-              <div className="space-y-2">
-                <Label>Delta display</Label>
-                <Select
-                  value={tile.kpiDeltaMode}
-                  onValueChange={(value) =>
-                    onUpdate(tile.id, {
-                      kpiDeltaMode: value as TileConfig["kpiDeltaMode"],
-                    })
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select delta display" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="percent">Percent</SelectItem>
-                    <SelectItem value="value">Value</SelectItem>
-                    <SelectItem value="both">Value + percent</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+              {visualOptions.kpiValueMode ? (
+                <div className="space-y-2">
+                  <Label>Primary value</Label>
+                  <Select
+                    value={kpiValueMode}
+                    onValueChange={(value) =>
+                      onUpdate(tile.id, {
+                        kpiValueMode: value as TileConfig["kpiValueMode"],
+                      })
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select primary value" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="current">Current</SelectItem>
+                      <SelectItem value="average">Average</SelectItem>
+                      <SelectItem value="min">Minimum</SelectItem>
+                      <SelectItem value="max">Maximum</SelectItem>
+                      <SelectItem value="sum">Total</SelectItem>
+                      <SelectItem value="first">Start</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              ) : null}
+              {visualOptions.kpiSecondaryValue ? (
+                <div className="space-y-2">
+                  <Label>Secondary value</Label>
+                  <Select
+                    value={kpiSecondaryValue}
+                    onValueChange={(value) =>
+                      onUpdate(tile.id, {
+                        kpiSecondaryValue: value as TileConfig["kpiSecondaryValue"],
+                      })
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select secondary value" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">None</SelectItem>
+                      <SelectItem value="previous">Previous</SelectItem>
+                      <SelectItem value="average">Average</SelectItem>
+                      <SelectItem value="min">Minimum</SelectItem>
+                      <SelectItem value="max">Maximum</SelectItem>
+                      <SelectItem value="sum">Total</SelectItem>
+                      <SelectItem value="first">Start</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              ) : null}
+              {visualOptions.kpiShowLabel ? (
+                <label className="flex items-center justify-between text-sm">
+                  <span>Show label</span>
+                  <Switch
+                    checked={kpiShowLabel}
+                    onCheckedChange={(value) =>
+                      onUpdate(tile.id, { kpiShowLabel: value })
+                    }
+                  />
+                </label>
+              ) : null}
+              {visualOptions.kpiShowDelta ? (
+                <label className="flex items-center justify-between text-sm">
+                  <span>Show delta</span>
+                  <Switch
+                    checked={kpiShowDelta}
+                    onCheckedChange={(value) =>
+                      onUpdate(tile.id, { kpiShowDelta: value })
+                    }
+                  />
+                </label>
+              ) : null}
+              {kpiShowDelta && visualOptions.kpiDeltaBasis ? (
+                <div className="space-y-2">
+                  <Label>Compare against</Label>
+                  <Select
+                    value={kpiDeltaBasis}
+                    onValueChange={(value) =>
+                      onUpdate(tile.id, {
+                        kpiDeltaBasis: value as TileConfig["kpiDeltaBasis"],
+                      })
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select comparison" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="previous">Previous point</SelectItem>
+                      <SelectItem value="first">Range start</SelectItem>
+                      <SelectItem value="average">Average</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              ) : null}
+              {kpiShowDelta && visualOptions.kpiDeltaMode ? (
+                <div className="space-y-2">
+                  <Label>Delta display</Label>
+                  <Select
+                    value={kpiDeltaMode}
+                    onValueChange={(value) =>
+                      onUpdate(tile.id, {
+                        kpiDeltaMode: value as TileConfig["kpiDeltaMode"],
+                      })
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select delta display" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="percent">Percent</SelectItem>
+                      <SelectItem value="value">Value</SelectItem>
+                      <SelectItem value="both">Value + percent</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              ) : null}
+              {kpiShowDelta && visualOptions.kpiDeltaStyle ? (
+                <div className="space-y-2">
+                  <Label>Delta style</Label>
+                  <Select
+                    value={kpiDeltaStyle}
+                    onValueChange={(value) =>
+                      onUpdate(tile.id, {
+                        kpiDeltaStyle: value as TileConfig["kpiDeltaStyle"],
+                      })
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select delta style" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="badge">Badge</SelectItem>
+                      <SelectItem value="inline">Inline</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              ) : null}
+              {visualOptions.kpiAlignment ? (
+                <div className="space-y-2">
+                  <Label>Alignment</Label>
+                  <Select
+                    value={kpiAlignment}
+                    onValueChange={(value) =>
+                      onUpdate(tile.id, {
+                        kpiAlignment: value as TileConfig["kpiAlignment"],
+                      })
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select alignment" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="left">Left</SelectItem>
+                      <SelectItem value="center">Center</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              ) : null}
+              {visualOptions.kpiValueSize ? (
+                <div className="space-y-2">
+                  <Label>Value size</Label>
+                  <Select
+                    value={kpiValueSize}
+                    onValueChange={(value) =>
+                      onUpdate(tile.id, {
+                        kpiValueSize: value as TileConfig["kpiValueSize"],
+                      })
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select size" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="lg">Large</SelectItem>
+                      <SelectItem value="xl">Extra large</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              ) : null}
             </div>
           ) : null}
         </TabsContent>

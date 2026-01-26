@@ -1,49 +1,68 @@
+"""SQLAlchemy models for the visuals backend."""
+
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any, ClassVar
+
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
-    Column,
     DateTime,
     ForeignKeyConstraint,
     Index,
     Integer,
     MetaData,
     String,
+    Table,
     false,
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import declarative_base, relationship
+from sqlalchemy.orm import Mapped, declarative_base, mapped_column, relationship
+
+DATETIME_TYPE = datetime
 
 
 class BaseModel:
-    __abstract__ = True
+    """Base model with shared helpers."""
 
-    def to_dict(self) -> dict:
+    __abstract__ = True
+    __table__: ClassVar[Table]
+
+    def to_dict(self: BaseModel) -> dict[str, object]:
+        """Convert a model instance into a simple dict."""
         return {column.name: getattr(self, column.name) for column in self.__table__.columns}
 
 
-Base = declarative_base(metadata=MetaData(), cls=BaseModel)
+Base = declarative_base(metadata=MetaData(schema="visuals-backend"), cls=BaseModel)
 metadata = Base.metadata
 
 
 class Dashboard(Base):
+    """Dashboard metadata and draft flag."""
+
     __tablename__ = "dashboards"
 
-    id = Column(String(32), primary_key=True)
-    client_id = Column(String(128), nullable=False)
-    user_id = Column(String(128), primary_key=True, server_default="")
-    is_draft = Column(Boolean, primary_key=True, server_default=false())
-    name = Column(String(160), nullable=False)
-    description = Column(String(2048))
-    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
-    updated_at = Column(
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    client_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    user_id: Mapped[str] = mapped_column(String(128), primary_key=True, server_default="")
+    is_draft: Mapped[bool] = mapped_column(Boolean, primary_key=True, server_default=false())
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    description: Mapped[str | None] = mapped_column(String(2048))
+    created_at: Mapped[DATETIME_TYPE] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[DATETIME_TYPE] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
         server_default=func.now(),
         onupdate=func.now(),
     )
 
-    tiles = relationship(
+    tiles: Mapped[list[DashboardTile]] = relationship(
         "DashboardTile",
         back_populates="dashboard",
         cascade="all, delete-orphan",
@@ -65,23 +84,29 @@ class Dashboard(Base):
 
 
 class DashboardTile(Base):
+    """Tile metadata for dashboards."""
+
     __tablename__ = "dashboard_tiles"
 
-    dashboard_id = Column(String(32), primary_key=True)
-    user_id = Column(String(128), primary_key=True, server_default="")
-    is_draft = Column(Boolean, primary_key=True, server_default=false())
-    tile_id = Column(String(128), primary_key=True)
-    position = Column(Integer, nullable=False)
-    config = Column(JSONB, nullable=False)
-    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
-    updated_at = Column(
+    dashboard_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(128), primary_key=True, server_default="")
+    is_draft: Mapped[bool] = mapped_column(Boolean, primary_key=True, server_default=false())
+    tile_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    config: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[DATETIME_TYPE] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[DATETIME_TYPE] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
         server_default=func.now(),
         onupdate=func.now(),
     )
 
-    dashboard = relationship("Dashboard", back_populates="tiles")
+    dashboard: Mapped[Dashboard] = relationship("Dashboard", back_populates="tiles")
 
     __table_args__ = (
         ForeignKeyConstraint(

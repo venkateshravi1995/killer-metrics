@@ -1,3 +1,5 @@
+"""Versioned API router."""
+
 from fastapi import APIRouter
 
 from app.api.routes.v1.dimensions import router as dimensions_router
