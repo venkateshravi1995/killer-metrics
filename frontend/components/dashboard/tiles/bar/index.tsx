@@ -44,7 +44,9 @@ function BarTile({
     fontSize: 11,
     fill: "var(--muted-foreground)",
     angle: tile.xAxisLabelAngle,
-    textAnchor: tile.xAxisLabelAngle < 0 ? "end" : "middle",
+    textAnchor: (tile.xAxisLabelAngle < 0 ? "end" : "middle") as
+      | "end"
+      | "middle",
   }
   return (
     <ResponsiveContainer width="100%" height="100%">
@@ -93,7 +95,7 @@ function BarTile({
           </>
         )}
         <Tooltip
-          formatter={(value: number, _name: string, props) => {
+          formatter={(value: number | string | undefined, _name, props) => {
             const dataKey = String(props?.dataKey ?? "")
             const match = seriesByKey.get(dataKey)
             const metric = match?.metricKey

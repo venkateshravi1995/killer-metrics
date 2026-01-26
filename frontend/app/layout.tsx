@@ -1,5 +1,6 @@
 import type { Metadata } from "next"
 import { IBM_Plex_Mono, IBM_Plex_Sans, Space_Grotesk } from "next/font/google"
+import { Analytics } from "@vercel/analytics/next"
 import "./globals.css"
 
 const spaceGrotesk = Space_Grotesk({
@@ -30,11 +31,12 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <body
         className={`${spaceGrotesk.variable} ${plexSans.variable} ${plexMono.variable} antialiased`}
       >
         {children}
+        <Analytics />
       </body>
     </html>
   )

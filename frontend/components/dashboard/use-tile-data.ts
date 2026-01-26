@@ -348,7 +348,7 @@ function buildTimeseriesData(
     tile.xAxisLabelMode === "full" ||
     (tile.xAxisLabelMode === "auto" && yearSet.size > 1)
 
-  let chartData = Array.from(rowsByTime.values())
+  let chartData: ChartDatum[] = Array.from(rowsByTime.values())
     .sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime())
     .map((row) => {
       const { time, ...rest } = row

@@ -45,7 +45,9 @@ function LineTile({
     fontSize: 11,
     fill: "var(--muted-foreground)",
     angle: tile.xAxisLabelAngle,
-    textAnchor: tile.xAxisLabelAngle < 0 ? "end" : "middle",
+    textAnchor: (tile.xAxisLabelAngle < 0 ? "end" : "middle") as
+      | "end"
+      | "middle",
   }
   return (
     <ResponsiveContainer width="100%" height="100%">
@@ -68,7 +70,7 @@ function LineTile({
           width={40}
         />
         <Tooltip
-          formatter={(value: number, _name: string, props) => {
+          formatter={(value: number | string | undefined, _name, props) => {
             const dataKey = String(props?.dataKey ?? "")
             const match = seriesByKey.get(dataKey)
             const metric = match?.metricKey

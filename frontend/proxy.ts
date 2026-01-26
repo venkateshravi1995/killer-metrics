@@ -1,0 +1,7 @@
+import { neonAuthMiddleware } from "@neondatabase/neon-js/auth/next/server"
+
+export const proxy = neonAuthMiddleware({ loginUrl: "/auth/sign-in" })
+
+export const config = {
+  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+}

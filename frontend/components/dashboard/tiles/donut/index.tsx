@@ -145,7 +145,9 @@ function DonutTile({ tile, primaryMetric, aggregates }: TileRenderProps) {
     <ResponsiveContainer width="100%" height="100%">
       <PieChart>
         <Tooltip
-          formatter={(value: number) => formatMetricValue(value, primaryMetric)}
+          formatter={(value: number | string | undefined) =>
+            formatMetricValue(Number(value ?? 0), primaryMetric)
+          }
           contentStyle={tooltipStyles}
         />
         {tile.showLegend ? (

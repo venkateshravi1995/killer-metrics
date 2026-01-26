@@ -140,12 +140,15 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
     const media = window.matchMedia("(max-width: 767px)")
     const update = () => setIsCompactView(media.matches)
     update()
-    if ("addEventListener" in media) {
+    if (typeof media.addEventListener === "function") {
       media.addEventListener("change", update)
       return () => media.removeEventListener("change", update)
     }
-    media.addListener(update)
-    return () => media.removeListener(update)
+    if (typeof media.addListener === "function") {
+      media.addListener(update)
+      return () => media.removeListener(update)
+    }
+    return undefined
   }, [])
 
   useEffect(() => {
@@ -676,7 +679,7 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
     }
   }
 
-  const commitLayout = (layout: Layout[]) => {
+  const commitLayout = (layout: Layout) => {
     const cols = resolveLayoutCols(activeBreakpoint)
     const layoutById = new Map(layout.map((item) => [item.i, item]))
     const tileById = new Map(tilesRef.current.map((tile) => [tile.id, tile]))
