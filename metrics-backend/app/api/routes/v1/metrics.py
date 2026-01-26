@@ -1,9 +1,11 @@
 """Metric catalog endpoints."""
 
-from typing import Annotated
+from collections.abc import Sequence
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response
-from sqlalchemy import func, literal, or_, select
+from sqlalchemy import func, literal, literal_column, or_, select
+from sqlalchemy.sql.elements import ColumnElement
 from sqlalchemy.sql.selectable import Select
 
 from app.api.routes.v1.utils import (
@@ -55,26 +57,27 @@ def _apply_metric_filters(stmt: Select, filters: MetricSearchFilters) -> Select:
 
 
 def _build_search_parts(
-    search_fields: list[str],
-    unaccent_query: object,
-) -> tuple[list, list]:
+    search_fields: Sequence[str],
+    unaccent_query: ColumnElement[Any],
+) -> tuple[list[ColumnElement[Any]], list[ColumnElement[Any]]]:
     """Build tsvector and similarity expressions for search fields."""
-    tsv_parts = []
-    sim_parts = []
+    tsv_parts: list[ColumnElement[Any]] = []
+    sim_parts: list[ColumnElement[Any]] = []
     for field in search_fields:
         column = getattr(MetricDefinition, field)
         weight = SEARCH_FIELD_WEIGHTS[field]
+        weight_literal = literal_column(f"'{weight}'::\"char\"")
         tsv_parts.append(
             func.setweight(
                 func.to_tsvector(
                     "simple",
                     func.metrics.immutable_unaccent(func.coalesce(column, "")),
                 ),
-                weight,
+                weight_literal,
             ),
         )
         sim_parts.append(
-            func.similarity(
+            func.metrics.similarity(
                 func.lower(func.metrics.immutable_unaccent(column)),
                 func.lower(unaccent_query),
             ),
@@ -82,7 +85,7 @@ def _build_search_parts(
     return tsv_parts, sim_parts
 
 
-def _combine_tsv_parts(tsv_parts: list) -> object:
+def _combine_tsv_parts(tsv_parts: Sequence[ColumnElement[Any]]) -> ColumnElement[Any]:
     """Combine weighted tsvector parts into a single expression."""
     tsv = tsv_parts[0]
     for part in tsv_parts[1:]:
@@ -93,7 +96,7 @@ def _combine_tsv_parts(tsv_parts: list) -> object:
 def _apply_search_query(
     stmt: Select,
     query: str,
-    search_fields: list[str],
+    search_fields: Sequence[str],
     similarity: float | None,
 ) -> Select:
     """Apply full-text and trigram search constraints."""
@@ -246,21 +249,27 @@ async def get_metric_availability(
         raise HTTPException(status_code=400, detail="unsupported grain")
     metric_id = await resolve_metric_id(connection, metric_key)
     source_grains = await resolve_metric_source_grains(
-        connection, [metric_id], requested_grain,
+        connection,
+        [metric_id],
+        requested_grain,
     )
     source_grain = source_grains.get(metric_id, requested_grain)
     filters = parse_dimension_pairs(dimensions)
 
     time_bucket = func.date_trunc(requested_grain, MetricObservation.time_start_ts)
-    stmt = select(
-        func.min(time_bucket).label("min_time_start_ts"),
-        func.max(time_bucket).label("max_time_start_ts"),
-    ).join(
-        MetricSeries,
-        MetricSeries.series_id == MetricObservation.series_id,
-    ).where(
-        MetricSeries.metric_id == metric_id,
-        MetricSeries.grain == source_grain,
+    stmt = (
+        select(
+            func.min(time_bucket).label("min_time_start_ts"),
+            func.max(time_bucket).label("max_time_start_ts"),
+        )
+        .join(
+            MetricSeries,
+            MetricSeries.series_id == MetricObservation.series_id,
+        )
+        .where(
+            MetricSeries.metric_id == metric_id,
+            MetricSeries.grain == source_grain,
+        )
     )
 
     stmt = await apply_dimension_pairs(stmt, connection, filters, "availability")
@@ -288,20 +297,26 @@ async def get_metric_freshness(
         raise HTTPException(status_code=400, detail="unsupported grain")
     metric_id = await resolve_metric_id(connection, metric_key)
     source_grains = await resolve_metric_source_grains(
-        connection, [metric_id], requested_grain,
+        connection,
+        [metric_id],
+        requested_grain,
     )
     source_grain = source_grains.get(metric_id, requested_grain)
     filters = parse_dimension_pairs(dimensions)
 
-    stmt = select(
-        MetricObservation.time_start_ts.label("latest_time_start_ts"),
-        MetricObservation.ingested_ts.label("latest_ingested_ts"),
-    ).join(
-        MetricSeries,
-        MetricSeries.series_id == MetricObservation.series_id,
-    ).where(
-        MetricSeries.metric_id == metric_id,
-        MetricSeries.grain == source_grain,
+    stmt = (
+        select(
+            MetricObservation.time_start_ts.label("latest_time_start_ts"),
+            MetricObservation.ingested_ts.label("latest_ingested_ts"),
+        )
+        .join(
+            MetricSeries,
+            MetricSeries.series_id == MetricObservation.series_id,
+        )
+        .where(
+            MetricSeries.metric_id == metric_id,
+            MetricSeries.grain == source_grain,
+        )
     )
 
     stmt = await apply_dimension_pairs(stmt, connection, filters, "freshness")

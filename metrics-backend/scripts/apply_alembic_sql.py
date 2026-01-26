@@ -8,9 +8,11 @@ import os
 import re
 import sys
 from pathlib import Path
+from typing import LiteralString, cast
 from urllib.parse import quote_plus
 
 import psycopg
+from psycopg import sql
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +117,8 @@ def apply_sql(statements: list[str], url: str) -> None:
         for raw_statement in statements:
             statement = _rewrite_alembic_version_create(raw_statement)
             try:
-                conn.execute(statement)
+                safe_statement = cast(LiteralString, statement)
+                conn.execute(sql.SQL(safe_statement))
             except Exception as exc:
                 if _is_duplicate_relation_error(statement, exc):
                     continue

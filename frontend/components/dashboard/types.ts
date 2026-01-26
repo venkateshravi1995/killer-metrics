@@ -68,6 +68,14 @@ export type TileConfig = {
   donutOuterRadius: number
   donutSlicePadding: number
   kpiDeltaMode: "percent" | "value" | "both"
+  kpiValueMode: "current" | "average" | "min" | "max" | "sum" | "first"
+  kpiSecondaryValue: "none" | "previous" | "average" | "min" | "max" | "sum" | "first"
+  kpiDeltaBasis: "previous" | "first" | "average"
+  kpiShowDelta: boolean
+  kpiDeltaStyle: "badge" | "inline"
+  kpiShowLabel: boolean
+  kpiAlignment: "left" | "center"
+  kpiValueSize: "lg" | "xl"
   groupBy: DimensionKey[]
   filters: Filter[]
   notes: string

@@ -1,0 +1,28 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.4.10
+    hooks:
+      - id: ruff
+        name: ruff (commit)
+        args: [--select, ALL]
+        files: ^(metrics-backend|visuals-backend)/
+        stages: [pre-commit]
+      - id: ruff
+        name: ruff (push full)
+        args: [--select, ALL, metrics-backend, visuals-backend]
+        pass_filenames: false
+        stages: [pre-push]
+  - repo: local
+    hooks:
+      - id: pyright
+        name: pyright (commit)
+        entry: python3 -m pyright --project pyrightconfig.json
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+      - id: pyright
+        name: pyright (push full)
+        entry: python3 -m pyright --project pyrightconfig.json
+        language: system
+        pass_filenames: false
+        stages: [pre-push]

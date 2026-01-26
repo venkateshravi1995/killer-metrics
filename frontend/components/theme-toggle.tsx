@@ -1,27 +1,26 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { Moon, Sun } from "lucide-react"
+import { Monitor, Moon, Sun } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 
 const storageKey = "kms-theme"
 
 type Theme = "light" | "dark"
+type ThemeSetting = Theme | "auto"
 
-const getPreferredTheme = (): Theme => {
+const getPreferredTheme = (): ThemeSetting => {
   if (typeof window === "undefined") {
-    return "light"
+    return "auto"
   }
 
   const stored = window.localStorage.getItem(storageKey)
-  if (stored === "light" || stored === "dark") {
-    return stored
+  if (stored === "light" || stored === "dark" || stored === "auto") {
+    return stored as ThemeSetting
   }
 
-  return window.matchMedia("(prefers-color-scheme: dark)").matches
-    ? "dark"
-    : "light"
+  return "auto"
 }
 
 const applyTheme = (theme: Theme) => {
@@ -34,25 +33,60 @@ const applyTheme = (theme: Theme) => {
 }
 
 export function ThemeToggle() {
-  const [theme, setTheme] = useState<Theme>("light")
+  const [setting, setSetting] = useState<ThemeSetting>("auto")
+  const [resolvedTheme, setResolvedTheme] = useState<Theme>("light")
 
   useEffect(() => {
     const initial = getPreferredTheme()
-    setTheme(initial)
-    applyTheme(initial)
+    setSetting(initial)
   }, [])
 
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return
+    }
+    window.localStorage.setItem(storageKey, setting)
+  }, [setting])
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return
+    }
+    const media = window.matchMedia("(prefers-color-scheme: dark)")
+    const resolveTheme = () =>
+      setting === "auto" ? (media.matches ? "dark" : "light") : setting
+    const update = (nextTheme?: Theme) => {
+      const resolved = nextTheme ?? resolveTheme()
+      setResolvedTheme(resolved)
+      applyTheme(resolved)
+    }
+    update()
+    if (setting !== "auto") {
+      return
+    }
+    const handleChange = (event: MediaQueryListEvent) => {
+      update(event.matches ? "dark" : "light")
+    }
+    if ("addEventListener" in media) {
+      media.addEventListener("change", handleChange)
+      return () => media.removeEventListener("change", handleChange)
+    }
+    media.addListener(handleChange)
+    return () => media.removeListener(handleChange)
+  }, [setting])
+
   const handleToggle = () => {
-    setTheme((current) => {
-      const next = current === "dark" ? "light" : "dark"
-      applyTheme(next)
-      window.localStorage.setItem(storageKey, next)
-      return next
+    setSetting((current) => {
+      const order: ThemeSetting[] = ["light", "dark", "auto"]
+      const index = order.indexOf(current)
+      return order[(index + 1) % order.length]
     })
   }
 
-  const isDark = theme === "dark"
-  const label = isDark ? "Light mode" : "Dark mode"
+  const isDark = resolvedTheme === "dark"
+  const isAuto = setting === "auto"
+  const label = isAuto ? "Auto (system)" : isDark ? "Dark mode" : "Light mode"
+  const shortLabel = isAuto ? "Auto" : isDark ? "Dark" : "Light"
 
   return (
     <Button
@@ -60,11 +94,17 @@ export function ThemeToggle() {
       size="sm"
       className="gap-2 rounded-full border-border/60 bg-background/80 shadow-sm backdrop-blur"
       onClick={handleToggle}
-      aria-label={`Switch to ${label.toLowerCase()}`}
+      aria-label={`Theme: ${label.toLowerCase()}`}
     >
-      {isDark ? <Sun size={16} /> : <Moon size={16} />}
+      {isAuto ? (
+        <Monitor size={16} />
+      ) : isDark ? (
+        <Moon size={16} />
+      ) : (
+        <Sun size={16} />
+      )}
       <span className="hidden sm:inline">{label}</span>
-      <span className="sm:hidden">{isDark ? "Light" : "Dark"}</span>
+      <span className="sm:hidden">{shortLabel}</span>
     </Button>
   )
 }

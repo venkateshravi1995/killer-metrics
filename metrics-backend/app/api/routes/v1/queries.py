@@ -1,11 +1,12 @@
 """Query endpoints for metric observations."""
 
 from collections import defaultdict
-from typing import Annotated
+from collections.abc import Mapping
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy import func, select
-from sqlalchemy.sql.elements import ClauseElement
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.api.routes.v1.utils import (
     apply_dimension_pairs,
@@ -29,7 +30,7 @@ from app.db.session import get_connection
 router = APIRouter(prefix="/v1/query", tags=["queries"])
 
 
-def _aggregation_expression(aggregation: str) -> ClauseElement:
+def _aggregation_expression(aggregation: str) -> ColumnElement[Any]:
     """Return the SQL expression for the requested aggregation."""
     normalized = aggregation.lower()
     if normalized == "avg":
@@ -82,7 +83,7 @@ def _group_metric_ids_by_grain(
 
 def _append_timeseries_rows(
     series_map: dict[str, dict],
-    rows: list[dict[str, object]],
+    rows: list[Mapping[str, Any]],
     metric_id_to_key: dict[int, str],
     group_by_labels: list[str],
 ) -> None:
@@ -128,7 +129,7 @@ def _finalize_series(
 
 def _append_aggregate_rows(
     items: list[dict],
-    rows: list[dict[str, object]],
+    rows: list[Mapping[str, Any]],
     metric_id_to_key: dict[int, str],
     group_by_labels: list[str],
 ) -> None:
@@ -154,6 +155,7 @@ def _finalize_groups(
     group_by_labels: list[str],
 ) -> list[dict]:
     """Sort aggregate groups for deterministic output."""
+
     def group_sort_key(item: dict) -> tuple:
         metric_idx = metric_order.get(item["metric_key"], 0)
         dims = tuple(item["dimensions"].get(key, "") for key in group_by_labels)
@@ -175,12 +177,12 @@ async def post_timeseries(
     metric_meta = await resolve_metric_ids(connection, payload.metric_keys)
     metric_ids = [int(meta["metric_id"]) for meta in metric_meta.values()]
     source_grains = await resolve_metric_source_grains(
-        connection, metric_ids, requested_grain,
+        connection,
+        metric_ids,
+        requested_grain,
     )
     metric_order = {key: idx for idx, key in enumerate(payload.metric_keys)}
-    metric_id_to_key = {
-        meta["metric_id"]: key for key, meta in metric_meta.items()
-    }
+    metric_id_to_key = {int(meta["metric_id"]): key for key, meta in metric_meta.items()}
 
     aggregation_groups = _build_aggregation_groups(metric_meta)
     group_by_labels, dimension_ids = await _resolve_dimension_context(
@@ -197,29 +199,42 @@ async def post_timeseries(
             continue
         agg_expr = _aggregation_expression(aggregation).label("value")
         time_bucket = func.date_trunc(
-            requested_grain, MetricObservation.time_start_ts,
+            requested_grain,
+            MetricObservation.time_start_ts,
         ).label("time_start_ts")
         for source_grain, source_metric_ids in metric_ids_by_grain.items():
-            stmt = select(
-                MetricSeries.metric_id,
-                time_bucket,
-                agg_expr,
-            ).join(
-                MetricSeries,
-                MetricSeries.series_id == MetricObservation.series_id,
-            ).where(
-                MetricSeries.metric_id.in_(source_metric_ids),
-                MetricSeries.grain == source_grain,
-                MetricObservation.time_start_ts >= payload.start_time,
-                MetricObservation.time_start_ts < payload.end_time,
+            stmt = (
+                select(
+                    MetricSeries.metric_id,
+                    time_bucket,
+                    agg_expr,
+                )
+                .join(
+                    MetricSeries,
+                    MetricSeries.series_id == MetricObservation.series_id,
+                )
+                .where(
+                    MetricSeries.metric_id.in_(source_metric_ids),
+                    MetricSeries.grain == source_grain,
+                    MetricObservation.time_start_ts >= payload.start_time,
+                    MetricObservation.time_start_ts < payload.end_time,
+                )
             )
 
             stmt = await apply_dimension_value_filters(
-                stmt, connection, payload.filters or [], "timeseries", dimension_ids,
+                stmt,
+                connection,
+                payload.filters or [],
+                "timeseries",
+                dimension_ids,
             )
 
             stmt, group_by_labels = await apply_group_by(
-                stmt, connection, group_by_labels, "timeseries", dimension_ids,
+                stmt,
+                connection,
+                group_by_labels,
+                "timeseries",
+                dimension_ids,
             )
 
             stmt = stmt.group_by(
@@ -259,20 +274,26 @@ async def get_latest(
         raise HTTPException(status_code=400, detail="unsupported grain")
     metric_id = await resolve_metric_id(connection, metric_key)
     source_grains = await resolve_metric_source_grains(
-        connection, [metric_id], requested_grain,
+        connection,
+        [metric_id],
+        requested_grain,
     )
     source_grain = source_grains.get(metric_id, requested_grain)
     filters = parse_dimension_pairs(dimensions)
 
-    stmt = select(
-        MetricObservation.time_start_ts,
-        MetricObservation.value_num,
-    ).join(
-        MetricSeries,
-        MetricSeries.series_id == MetricObservation.series_id,
-    ).where(
-        MetricSeries.metric_id == metric_id,
-        MetricSeries.grain == source_grain,
+    stmt = (
+        select(
+            MetricObservation.time_start_ts,
+            MetricObservation.value_num,
+        )
+        .join(
+            MetricSeries,
+            MetricSeries.series_id == MetricObservation.series_id,
+        )
+        .where(
+            MetricSeries.metric_id == metric_id,
+            MetricSeries.grain == source_grain,
+        )
     )
 
     stmt = await apply_dimension_pairs(stmt, connection, filters, "latest")
@@ -300,12 +321,12 @@ async def post_aggregate(
     metric_meta = await resolve_metric_ids(connection, payload.metric_keys)
     metric_ids = [int(meta["metric_id"]) for meta in metric_meta.values()]
     source_grains = await resolve_metric_source_grains(
-        connection, metric_ids, requested_grain,
+        connection,
+        metric_ids,
+        requested_grain,
     )
     metric_order = {key: idx for idx, key in enumerate(payload.metric_keys)}
-    metric_id_to_key = {
-        meta["metric_id"]: key for key, meta in metric_meta.items()
-    }
+    metric_id_to_key = {int(meta["metric_id"]): key for key, meta in metric_meta.items()}
 
     aggregation_groups = _build_aggregation_groups(metric_meta)
     group_by_labels, dimension_ids = await _resolve_dimension_context(
@@ -322,25 +343,37 @@ async def post_aggregate(
             continue
         agg_expr = _aggregation_expression(aggregation).label("value")
         for source_grain, source_metric_ids in metric_ids_by_grain.items():
-            stmt = select(
-                MetricSeries.metric_id,
-                agg_expr,
-            ).join(
-                MetricSeries,
-                MetricSeries.series_id == MetricObservation.series_id,
-            ).where(
-                MetricSeries.metric_id.in_(source_metric_ids),
-                MetricSeries.grain == source_grain,
-                MetricObservation.time_start_ts >= payload.start_time,
-                MetricObservation.time_start_ts < payload.end_time,
+            stmt = (
+                select(
+                    MetricSeries.metric_id,
+                    agg_expr,
+                )
+                .join(
+                    MetricSeries,
+                    MetricSeries.series_id == MetricObservation.series_id,
+                )
+                .where(
+                    MetricSeries.metric_id.in_(source_metric_ids),
+                    MetricSeries.grain == source_grain,
+                    MetricObservation.time_start_ts >= payload.start_time,
+                    MetricObservation.time_start_ts < payload.end_time,
+                )
             )
 
             stmt = await apply_dimension_value_filters(
-                stmt, connection, payload.filters or [], "agg", dimension_ids,
+                stmt,
+                connection,
+                payload.filters or [],
+                "agg",
+                dimension_ids,
             )
 
             stmt, group_by_labels = await apply_group_by(
-                stmt, connection, group_by_labels, "agg", dimension_ids,
+                stmt,
+                connection,
+                group_by_labels,
+                "agg",
+                dimension_ids,
             )
 
             stmt = stmt.group_by(MetricSeries.metric_id)
@@ -368,7 +401,9 @@ async def post_topk(
         raise HTTPException(status_code=400, detail="unsupported grain")
     metric_id = await resolve_metric_id(connection, payload.metric_key)
     source_grains = await resolve_metric_source_grains(
-        connection, [metric_id], requested_grain,
+        connection,
+        [metric_id],
+        requested_grain,
     )
     source_grain = source_grains.get(metric_id, requested_grain)
 
@@ -378,22 +413,32 @@ async def post_topk(
     aggregation = metric_result.scalar_one_or_none() or "sum"
     agg_expr = _aggregation_expression(aggregation).label("value")
 
-    stmt = select(agg_expr).join(
-        MetricSeries,
-        MetricSeries.series_id == MetricObservation.series_id,
-    ).where(
-        MetricSeries.metric_id == metric_id,
-        MetricSeries.grain == source_grain,
-        MetricObservation.time_start_ts >= payload.start_time,
-        MetricObservation.time_start_ts < payload.end_time,
+    stmt = (
+        select(agg_expr)
+        .join(
+            MetricSeries,
+            MetricSeries.series_id == MetricObservation.series_id,
+        )
+        .where(
+            MetricSeries.metric_id == metric_id,
+            MetricSeries.grain == source_grain,
+            MetricObservation.time_start_ts >= payload.start_time,
+            MetricObservation.time_start_ts < payload.end_time,
+        )
     )
 
     stmt = await apply_dimension_value_filters(
-        stmt, connection, payload.filters or [], "topk",
+        stmt,
+        connection,
+        payload.filters or [],
+        "topk",
     )
 
     stmt, group_by_labels = await apply_group_by(
-        stmt, connection, payload.group_by or [], "topk",
+        stmt,
+        connection,
+        payload.group_by or [],
+        "topk",
     )
 
     order_expr = agg_expr.asc() if payload.order == "asc" else agg_expr.desc()

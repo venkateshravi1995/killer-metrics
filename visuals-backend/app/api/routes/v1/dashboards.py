@@ -9,10 +9,10 @@ import uuid
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, delete, func, or_, select
 
 from app.core.config import settings
 from app.db.schema import Dashboard, DashboardTile
@@ -32,9 +32,16 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from sqlalchemy.ext.asyncio import AsyncSession
-    from sqlalchemy.sql.elements import ClauseElement
+    from sqlalchemy.sql.elements import ColumnElement
+else:
+    AsyncSession = Any
 
 router = APIRouter(prefix="/v1/dashboards", tags=["dashboards"])
+
+CLIENT_ID_HEADER = settings.client_id_header
+USER_ID_HEADER = settings.user_id_header
+SESSION_DEPENDENCY = Depends(get_session)
+SessionDep = Annotated[AsyncSession, SESSION_DEPENDENCY]
 
 
 def _encode_cursor(value: dict | None) -> str | None:
@@ -57,25 +64,29 @@ def _decode_cursor(value: str | None) -> dict | None:
     return parsed
 
 
-def _extract_tiles(config: dict) -> list[dict]:
+def _db_now() -> datetime:
+    return cast("datetime", func.now())
+
+
+def _extract_tiles(config: dict[str, Any]) -> list[dict[str, Any]]:
     tiles = config.get("tiles")
     if isinstance(tiles, list):
         return deepcopy(tiles)
     return []
 
 
-def _build_config(tiles: list[dict]) -> dict:
+def _build_config(tiles: list[dict[str, Any]]) -> dict[str, Any]:
     return {"tiles": tiles}
 
 
-def _tiles_from_rows(rows: list[DashboardTile]) -> list[dict]:
+def _tiles_from_rows(rows: list[DashboardTile]) -> list[dict[str, Any]]:
     return [row.config for row in rows]
 
 
 def _item_to_dashboard(
     item: Dashboard,
     *,
-    tiles: list[dict],
+    tiles: list[dict[str, Any]],
     created_at_override: datetime | None = None,
     is_draft: bool = False,
 ) -> DashboardOut:
@@ -102,8 +113,8 @@ def _item_to_summary(item: Dashboard) -> DashboardSummary:
 
 
 def get_client_id(
-    x_client_id: Annotated[str | None, Header(alias=settings.client_id_header)] = None,
-    x_user_id: Annotated[str | None, Header(alias=settings.user_id_header)] = None,
+    x_client_id: Annotated[str | None, Header(alias=CLIENT_ID_HEADER)] = None,
+    x_user_id: Annotated[str | None, Header(alias=USER_ID_HEADER)] = None,
 ) -> str:
     """Resolve the client identifier from request headers."""
     value = (x_client_id or x_user_id or "1").strip()
@@ -111,8 +122,8 @@ def get_client_id(
 
 
 def get_user_id(
-    x_user_id: Annotated[str | None, Header(alias=settings.user_id_header)] = None,
-    x_client_id: Annotated[str | None, Header(alias=settings.client_id_header)] = None,
+    x_user_id: Annotated[str | None, Header(alias=USER_ID_HEADER)] = None,
+    x_client_id: Annotated[str | None, Header(alias=CLIENT_ID_HEADER)] = None,
 ) -> str:
     """Resolve the user identifier from request headers."""
     value = (x_user_id or x_client_id or "1").strip()
@@ -131,7 +142,7 @@ class RequestContext:
 def get_request_context(
     client_id: Annotated[str, Depends(get_client_id)],
     user_id: Annotated[str, Depends(get_user_id)],
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: SessionDep,
 ) -> RequestContext:
     """Build a request context from headers and session dependency."""
     return RequestContext(client_id=client_id, user_id=user_id, session=session)
@@ -175,12 +186,12 @@ async def _get_draft_dashboard(
 
 async def _fetch_tiles(
     session: AsyncSession,
-    filters: Sequence[ClauseElement],
+    filters: Sequence[ColumnElement[bool]],
 ) -> list[DashboardTile]:
     result = await session.execute(
         select(DashboardTile).where(*filters).order_by(DashboardTile.position),
     )
-    return result.scalars().all()
+    return list(result.scalars().all())
 
 
 async def _seed_draft(
@@ -288,7 +299,7 @@ async def list_dashboards(
             ),
         )
     result = await context.session.execute(stmt)
-    items = result.scalars().all()
+    items = list(result.scalars().all())
     next_cursor = None
     if len(items) > limit:
         items.pop()
@@ -361,20 +372,28 @@ async def update_dashboard(
         )
         published.name = payload.name
         published.description = payload.description
-        published.updated_at = func.now()
-        published.tiles = []
+        published.updated_at = _db_now()
+        await context.session.execute(
+            delete(DashboardTile).where(
+                DashboardTile.dashboard_id == dashboard_id,
+                DashboardTile.user_id == "",
+                DashboardTile.is_draft.is_(False),
+            ),
+        )
         if tiles:
-            published.tiles = [
-                DashboardTile(
-                    dashboard_id=dashboard_id,
-                    user_id="",
-                    is_draft=False,
-                    tile_id=tile["id"],
-                    position=index,
-                    config=tile,
-                )
-                for index, tile in enumerate(tiles)
-            ]
+            context.session.add_all(
+                [
+                    DashboardTile(
+                        dashboard_id=dashboard_id,
+                        user_id="",
+                        is_draft=False,
+                        tile_id=tile["id"],
+                        position=index,
+                        config=tile,
+                    )
+                    for index, tile in enumerate(tiles)
+                ],
+            )
     await context.session.refresh(published)
     return _item_to_dashboard(published, tiles=tiles)
 
@@ -442,7 +461,7 @@ async def add_tile_to_draft(
                 config=payload.model_dump(),
             ),
         )
-        draft.updated_at = func.now()
+        draft.updated_at = _db_now()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -498,7 +517,7 @@ async def update_tile_in_draft(
         tile = result.scalar_one_or_none()
         if tile is None:
             raise HTTPException(status_code=404, detail="Tile not found.")
-        now_expr = func.now()
+        now_expr = _db_now()
         tile.config = payload.model_dump()
         tile.updated_at = now_expr
         draft.updated_at = now_expr
@@ -557,7 +576,7 @@ async def delete_tile_from_draft(
         if tile is None:
             raise HTTPException(status_code=404, detail="Tile not found.")
         await context.session.delete(tile)
-        draft.updated_at = func.now()
+        draft.updated_at = _db_now()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -614,7 +633,7 @@ async def update_draft_layout(
                 status_code=404,
                 detail=f"Tiles not found: {', '.join(missing)}",
             )
-        now_expr = func.now()
+        now_expr = _db_now()
         for item in payload.items:
             tile = rows[item.id]
             config = dict(tile.config)
@@ -673,7 +692,7 @@ async def update_draft_metadata(
             raise HTTPException(status_code=400, detail="Dashboard name is required.")
         draft.name = name
         draft.description = description
-        draft.updated_at = func.now()
+        draft.updated_at = _db_now()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -707,19 +726,29 @@ async def commit_draft(
         )
         published.name = draft.name
         published.description = draft.description
-        published.updated_at = func.now()
-        published.tiles = [
-            DashboardTile(
-                dashboard_id=dashboard_id,
-                user_id="",
-                is_draft=False,
-                tile_id=tile.tile_id,
-                position=tile.position,
-                config=tile.config,
-                created_at=tile.created_at,
+        published.updated_at = _db_now()
+        await context.session.execute(
+            delete(DashboardTile).where(
+                DashboardTile.dashboard_id == dashboard_id,
+                DashboardTile.user_id == "",
+                DashboardTile.is_draft.is_(False),
+            ),
+        )
+        if draft_tiles:
+            context.session.add_all(
+                [
+                    DashboardTile(
+                        dashboard_id=dashboard_id,
+                        user_id="",
+                        is_draft=False,
+                        tile_id=tile.tile_id,
+                        position=tile.position,
+                        config=tile.config,
+                        created_at=tile.created_at,
+                    )
+                    for tile in draft_tiles
+                ],
             )
-            for tile in draft_tiles
-        ]
         await context.session.delete(draft)
     await context.session.refresh(published)
     return _item_to_dashboard(

@@ -34,7 +34,8 @@ async def resolve_metric_id(connection: PostgresExecutor, metric_key: str) -> in
 
 
 async def resolve_metric_ids(
-    connection: PostgresExecutor, metric_keys: Iterable[str],
+    connection: PostgresExecutor,
+    metric_keys: Iterable[str],
 ) -> dict[str, dict[str, int | str]]:
     """Resolve metric keys to IDs and aggregation types."""
     keys = list(dict.fromkeys(metric_keys))
@@ -61,7 +62,8 @@ async def resolve_metric_ids(
 
 
 async def resolve_dimension_ids(
-    connection: PostgresExecutor, dimension_keys: Iterable[str],
+    connection: PostgresExecutor,
+    dimension_keys: Iterable[str],
 ) -> dict[str, int]:
     """Resolve dimension keys to IDs."""
     keys = list(dict.fromkeys(dimension_keys))

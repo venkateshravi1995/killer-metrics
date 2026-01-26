@@ -5,7 +5,7 @@ import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.exception_handlers import (
     http_exception_handler,
     request_validation_exception_handler,
@@ -42,9 +42,7 @@ app = FastAPI(title="Metric Killer API", lifespan=lifespan)
 logger = logging.getLogger("metric_killer.api")
 
 cors_origins = [
-    origin.strip()
-    for origin in os.getenv("CORS_ORIGINS", "*").split(",")
-    if origin.strip()
+    origin.strip() for origin in os.getenv("CORS_ORIGINS", "*").split(",") if origin.strip()
 ]
 app.add_middleware(
     CORSMiddleware,
@@ -96,7 +94,7 @@ async def database_error_handler(
 async def http_exception_logger(
     request: Request,
     exc: HTTPException,
-) -> JSONResponse:
+) -> Response:
     """Log HTTP exceptions and delegate to FastAPI handler."""
     level = logging.ERROR if exc.status_code >= SERVER_ERROR_THRESHOLD else logging.INFO
     logger.log(

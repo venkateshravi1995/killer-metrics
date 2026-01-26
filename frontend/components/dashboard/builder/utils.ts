@@ -204,6 +204,16 @@ export function normalizeTileConfig(tile: TileConfig) {
     typeof sanitizedTile.xAxisLabelAngle === "number"
       ? sanitizedTile.xAxisLabelAngle
       : tileDefaults.xAxisLabelAngle
+  const kpiValueMode = sanitizedTile.kpiValueMode ?? tileDefaults.kpiValueMode
+  const kpiSecondaryValue =
+    sanitizedTile.kpiSecondaryValue ?? tileDefaults.kpiSecondaryValue
+  const kpiDeltaMode = sanitizedTile.kpiDeltaMode ?? tileDefaults.kpiDeltaMode
+  const kpiDeltaBasis = sanitizedTile.kpiDeltaBasis ?? tileDefaults.kpiDeltaBasis
+  const kpiShowDelta = sanitizedTile.kpiShowDelta ?? tileDefaults.kpiShowDelta
+  const kpiDeltaStyle = sanitizedTile.kpiDeltaStyle ?? tileDefaults.kpiDeltaStyle
+  const kpiShowLabel = sanitizedTile.kpiShowLabel ?? tileDefaults.kpiShowLabel
+  const kpiAlignment = sanitizedTile.kpiAlignment ?? tileDefaults.kpiAlignment
+  const kpiValueSize = sanitizedTile.kpiValueSize ?? tileDefaults.kpiValueSize
   const normalizedFilters = (sanitizedTile.filters ?? []).map((filter) => {
     const legacyFilter = filter as TileFilter & {
       value?: string
@@ -225,6 +235,15 @@ export function normalizeTileConfig(tile: TileConfig) {
     seriesColors,
     xAxisLabelMode,
     xAxisLabelAngle,
+    kpiValueMode,
+    kpiSecondaryValue,
+    kpiDeltaMode,
+    kpiDeltaBasis,
+    kpiShowDelta,
+    kpiDeltaStyle,
+    kpiShowLabel,
+    kpiAlignment,
+    kpiValueSize,
     filters: normalizedFilters,
   }
 }

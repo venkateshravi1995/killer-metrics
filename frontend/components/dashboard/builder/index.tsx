@@ -6,9 +6,9 @@ import {
   ConfiguratorDrawer,
   CreateDashboardModal,
   DeleteDashboardModal,
+  EditDashboardModal,
 } from "./modals"
 import { useDashboardBuilderState, type DashboardBuilderInitialData } from "./state"
-import { TopBar } from "@/components/top-bar"
 
 type DashboardBuilderProps = {
   initialData?: DashboardBuilderInitialData
@@ -26,12 +26,12 @@ export default function DashboardBuilder({ initialData }: DashboardBuilderProps)
     dashboards,
     activeDashboardId,
     dashboardName,
-    dashboardDescription,
     dashboardStatus,
     dashboardError,
     hasDraft,
     draftStatus,
     draftError,
+    refreshIntervalMs,
     isRenaming,
     createModalOpen,
     createName,
@@ -48,11 +48,11 @@ export default function DashboardBuilder({ initialData }: DashboardBuilderProps)
     setActiveBreakpoint,
     setSelectedTileId,
     setDashboardName,
-    setDashboardDescription,
     setIsRenaming,
     setCreateName,
     setCreateDescription,
     setCreateModalOpen,
+    setRefreshIntervalMs,
     addTile,
     duplicateTile,
     removeTile,
@@ -64,9 +64,9 @@ export default function DashboardBuilder({ initialData }: DashboardBuilderProps)
     openDeleteModal,
     closeDeleteModal,
     handleSaveDashboard,
+    handleDiscardDraft,
     handleDeleteDashboard,
     handleCreateDashboard,
-    toggleEditMode,
     handleConfigureTile,
     closeConfigurator,
     handleSeriesChange,
@@ -74,30 +74,26 @@ export default function DashboardBuilder({ initialData }: DashboardBuilderProps)
 
   return (
     <div className="app-shell flex min-h-screen flex-col">
-      <TopBar />
       <DashboardHeader
         dashboards={dashboards}
         activeDashboardId={activeDashboardId}
         dashboardName={dashboardName}
-        dashboardDescription={dashboardDescription}
         dashboardStatus={dashboardStatus}
         dashboardError={dashboardError}
         draftStatus={draftStatus}
         draftError={draftError}
         hasDraft={hasDraft}
-        editMode={editMode}
-        isRenaming={isRenaming}
+        refreshIntervalMs={refreshIntervalMs}
         canAddTile={metrics.length > 0}
         onDashboardSelect={handleDashboardSelect}
-        onToggleRename={() => setIsRenaming((prev) => !prev)}
-        onRenameDone={() => setIsRenaming(false)}
-        onDashboardNameChange={setDashboardName}
-        onDashboardDescriptionChange={setDashboardDescription}
+        onToggleRename={() => setIsRenaming(true)}
+        isRenaming={isRenaming}
         onOpenCreateModal={openCreateModal}
         onOpenDeleteModal={openDeleteModal}
         onRefresh={handleRefreshDashboard}
-        onToggleEditMode={toggleEditMode}
+        onRefreshIntervalChange={setRefreshIntervalMs}
         onSaveDashboard={handleSaveDashboard}
+        onDiscardDraft={handleDiscardDraft}
         onAddTile={addTile}
       />
 
@@ -118,11 +114,6 @@ export default function DashboardBuilder({ initialData }: DashboardBuilderProps)
         onSeriesChange={handleSeriesChange}
         onLayoutCommit={commitLayout}
         onBreakpointChange={setActiveBreakpoint}
-        selectedTile={selectedTile}
-        selectedSeries={selectedSeries}
-        metrics={metrics}
-        dimensions={dimensions}
-        onUpdateTile={updateTile}
       />
 
       <CreateDashboardModal
@@ -134,6 +125,14 @@ export default function DashboardBuilder({ initialData }: DashboardBuilderProps)
         onNameChange={setCreateName}
         onDescriptionChange={setCreateDescription}
         onCreate={handleCreateDashboard}
+      />
+
+      <EditDashboardModal
+        open={isRenaming}
+        name={dashboardName}
+        isSaving={dashboardStatus === "saving"}
+        onClose={() => setIsRenaming(false)}
+        onNameChange={setDashboardName}
       />
 
       <DeleteDashboardModal
@@ -148,17 +147,15 @@ export default function DashboardBuilder({ initialData }: DashboardBuilderProps)
         onDelete={handleDeleteDashboard}
       />
 
-      {editMode && isCompactView ? (
-        <ConfiguratorDrawer
-          open={configuratorOpen}
-          tile={selectedTile}
-          series={selectedSeries}
-          metrics={metrics}
-          dimensions={dimensions}
-          onUpdate={updateTile}
-          onClose={closeConfigurator}
-        />
-      ) : null}
+      <ConfiguratorDrawer
+        open={configuratorOpen}
+        tile={selectedTile}
+        series={selectedSeries}
+        metrics={metrics}
+        dimensions={dimensions}
+        onUpdate={updateTile}
+        onClose={closeConfigurator}
+      />
     </div>
   )
 }

@@ -22,7 +22,4 @@ async def fetch_event_counts(
     )
     result = await executor.execute(stmt)
     rows = result.mappings().all()
-    return [
-        {"event_type": row["event_type"], "event_count": row["event_count"]}
-        for row in rows
-    ]
+    return [{"event_type": row["event_type"], "event_count": row["event_count"]} for row in rows]

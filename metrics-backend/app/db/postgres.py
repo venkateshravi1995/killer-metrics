@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
     from sqlalchemy.engine import Result
-    from sqlalchemy.sql.elements import ClauseElement
+    from sqlalchemy.sql.base import Executable
 
 logger = logging.getLogger(__name__)
 
@@ -54,8 +54,8 @@ class PostgresExecutor:
     session: AsyncSession
 
     async def execute(
-        self,
-        stmt: ClauseElement,
+        self: PostgresExecutor,
+        stmt: Executable,
         params: dict[str, object] | None = None,
     ) -> Result:
         """Execute a SQL statement with optional parameters."""

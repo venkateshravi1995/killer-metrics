@@ -10,7 +10,7 @@ import re
 import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, TypedDict
 
 from faker import Faker
 from sqlalchemy import create_engine, insert
@@ -61,6 +61,13 @@ class ObservationInsertConfig:
     grain: str
 
 
+class DimensionSetSpec(TypedDict):
+    """Typed structure for dimension set rows."""
+
+    set_hash: str
+    pairs: list[tuple[int, int]]
+
+
 def slugify(value: str, max_len: int) -> str:
     """Normalize a string into a slug with length bounds."""
     slug = SLUG_RE.sub("_", value.strip().lower()).strip("_")
@@ -79,7 +86,7 @@ def truncate(value: str, max_len: int) -> str:
     return value[:max_len].rstrip()
 
 
-def chunked(items: list[dict[str, object]], size: int) -> Iterable[list[dict[str, object]]]:
+def chunked(items: list[dict[str, Any]], size: int) -> Iterable[list[dict[str, Any]]]:
     """Yield lists of items in fixed-size batches."""
     for index in range(0, len(items), size):
         yield items[index : index + size]
@@ -93,7 +100,7 @@ def print_progress(message: str) -> None:
 def insert_batches(
     engine: Engine,
     table: Table,
-    rows: list[dict[str, object]],
+    rows: list[dict[str, Any]],
     batch_size: int,
     label: str,
 ) -> None:
@@ -112,13 +119,13 @@ def insert_batches(
 def insert_returning_batches(
     engine: Engine,
     table: Table,
-    rows: list[dict[str, object]],
+    rows: list[dict[str, Any]],
     return_cols: Sequence[ColumnElement],
     options: BatchOptions,
-) -> list[dict[str, object]]:
+) -> list[dict[str, Any]]:
     """Insert rows and return selected columns for each batch."""
     total = len(rows)
-    results: list[dict[str, object]] = []
+    results: list[dict[str, Any]] = []
     if total == 0:
         print_progress(f"{options.label}: nothing to insert")
         return results
@@ -199,13 +206,13 @@ def build_metric_rows(
     faker: Faker,
     count: int,
     key_prefix: str,
-) -> list[dict[str, object]]:
+) -> list[dict[str, Any]]:
     """Build metric definition rows with realistic attributes."""
     metric_types = ["count", "ratio", "sum", "avg", "rate"]
     units = ["count", "percent", "usd", "seconds", "ms"]
     directionality = ["higher", "lower", "neutral"]
     aggregations = ["sum", "avg", "min", "max", "count"]
-    rows: list[dict[str, object]] = []
+    rows: list[dict[str, Any]] = []
     for index in range(count):
         word = slugify(faker.word(), 32)
         metric_key = slugify(f"{key_prefix}_metric_{index:04d}_{word}", 128)
@@ -229,9 +236,9 @@ def build_dimension_rows(
     faker: Faker,
     count: int,
     key_prefix: str,
-) -> list[dict[str, object]]:
+) -> list[dict[str, Any]]:
     """Build dimension definition rows."""
-    rows: list[dict[str, object]] = []
+    rows: list[dict[str, Any]] = []
     for index in range(count):
         word = slugify(faker.word(), 32)
         dimension_key = slugify(f"{key_prefix}_dimension_{index:03d}_{word}", 128)
@@ -253,9 +260,9 @@ def build_dimension_value_rows(
     dimension_ids: list[int],
     values_per_dimension: int,
     dimension_keys: dict[int, str],
-) -> list[dict[str, object]]:
+) -> list[dict[str, Any]]:
     """Build dimension value rows for each dimension."""
-    rows: list[dict[str, object]] = []
+    rows: list[dict[str, Any]] = []
     for dimension_id in dimension_ids:
         dimension_key = dimension_keys[dimension_id]
         for index in range(values_per_dimension):
@@ -269,11 +276,11 @@ def build_dimension_sets(
     faker: Faker,
     values_by_dimension: dict[int, list[int]],
     sets_count: int,
-) -> list[dict[str, object]]:
+) -> list[DimensionSetSpec]:
     """Build randomized dimension sets."""
     dimension_ids = sorted(values_by_dimension.keys())
     seen_hashes: set[str] = set()
-    sets: list[dict[str, object]] = []
+    sets: list[DimensionSetSpec] = []
     attempts = 0
     max_attempts = sets_count * 20
     while len(sets) < sets_count:
@@ -305,7 +312,7 @@ def insert_observations(
         return
     delta = grain_to_delta(config.grain)
     base_start = datetime.now(UTC) - (delta * config.observations_per_metric)
-    batch: list[dict[str, object]] = []
+    batch: list[dict[str, Any]] = []
     inserted = 0
     print_progress(f"observations: generating {total} rows")
     for series_id in series_ids:
@@ -375,8 +382,7 @@ def main() -> int:
     )
     dimension_ids = [int(row["dimension_id"]) for row in dimension_results]
     dimension_keys = {
-        int(row["dimension_id"]): str(row["dimension_key"])
-        for row in dimension_results
+        int(row["dimension_id"]): str(row["dimension_key"]) for row in dimension_results
     }
 
     print_progress("Building dimension values...")
@@ -412,13 +418,10 @@ def main() -> int:
         [DimensionSet.__table__.c.set_id, DimensionSet.__table__.c.set_hash],
         BatchOptions(batch_size=args.meta_batch_size, label="dimension sets"),
     )
-    set_id_by_hash = {
-        str(row["set_hash"]): int(row["set_id"])
-        for row in dimension_set_results
-    }
+    set_id_by_hash = {str(row["set_hash"]): int(row["set_id"]) for row in dimension_set_results}
 
     print_progress("Building dimension set values...")
-    dimension_set_value_rows: list[dict[str, object]] = []
+    dimension_set_value_rows: list[dict[str, Any]] = []
     for spec in dimension_sets:
         set_id = set_id_by_hash[spec["set_hash"]]
         for dimension_id, value_id in spec["pairs"]:

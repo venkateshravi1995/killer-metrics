@@ -86,7 +86,7 @@ class DimensionValueFilter(Protocol):
     """Typed protocol for dimension filters."""
 
     dimension_key: str
-    values: Iterable[str]
+    values: list[str]
 
 
 async def apply_dimension_value_filters(
@@ -102,13 +102,12 @@ async def apply_dimension_value_filters(
         return stmt
     if dimension_ids is None:
         dimension_ids = await resolve_dimension_ids(
-            connection, [flt.dimension_key for flt in filter_list],
+            connection,
+            [flt.dimension_key for flt in filter_list],
         )
     else:
         missing = [
-            flt.dimension_key
-            for flt in filter_list
-            if flt.dimension_key not in dimension_ids
+            flt.dimension_key for flt in filter_list if flt.dimension_key not in dimension_ids
         ]
         if missing:
             raise HTTPException(
@@ -118,7 +117,8 @@ async def apply_dimension_value_filters(
     for idx, flt in enumerate(filter_list):
         set_alias = aliased(DimensionSetValue, name=f"{alias_prefix}_filter_set_{idx}")
         value_alias = aliased(DimensionValue, name=f"{alias_prefix}_filter_value_{idx}")
-        if not flt.values:
+        filter_values = list(flt.values)
+        if not filter_values:
             continue
         stmt = (
             stmt.join(
@@ -131,7 +131,7 @@ async def apply_dimension_value_filters(
             )
             .where(
                 set_alias.dimension_id == dimension_ids[flt.dimension_key],
-                value_alias.value.in_(list(flt.values)),
+                value_alias.value.in_(filter_values),
             )
         )
     return stmt

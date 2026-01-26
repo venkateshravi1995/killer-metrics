@@ -11,6 +11,7 @@ from sqlalchemy import (
     ForeignKey,
     MetaData,
     String,
+    Table,
     func,
 )
 from sqlalchemy.orm import declarative_base, relationship
@@ -20,8 +21,9 @@ class BaseModel:
     """Base model with shared helpers."""
 
     __abstract__ = True
+    __table__: ClassVar[Table]
 
-    def to_dict(self) -> dict[str, object]:
+    def to_dict(self: "BaseModel") -> dict[str, object]:
         """Convert a model instance into a simple dict."""
         return {column.name: getattr(self, column.name) for column in self.__table__.columns}
 

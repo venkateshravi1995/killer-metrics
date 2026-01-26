@@ -18,18 +18,12 @@ export function TopBar() {
           </span>
           <div className="space-y-1">
             <p className="text-[10px] uppercase tracking-[0.32em] text-muted-foreground">
-              Killer Metric Studio
+              Venky's Killer Metrics
             </p>
             <div className="flex flex-wrap items-center gap-2">
               <span className="font-display text-lg font-semibold">
                 Dashboard Control
               </span>
-              <Badge
-                variant="secondary"
-                className="rounded-full text-[10px] uppercase"
-              >
-                Builder
-              </Badge>
             </div>
           </div>
         </div>
@@ -37,10 +31,6 @@ export function TopBar() {
           className="flex items-center gap-3 animate-stagger"
           style={{ ["--delay" as string]: "120ms" }}
         >
-          <div className="hidden items-center gap-2 rounded-full border border-border/60 bg-background/70 px-3 py-1 text-xs text-muted-foreground shadow-sm md:flex">
-            <span className="h-2 w-2 rounded-full bg-emerald-500" />
-            Live sync
-          </div>
           <ThemeToggle />
         </div>
       </div>

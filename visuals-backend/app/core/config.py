@@ -48,9 +48,9 @@ def _normalize_database_url(url: str) -> str:
 class Settings:
     """Typed settings loaded from environment variables."""
 
-    database_url: str = os.getenv("DASHBOARDING_DATABASE_URL", "")
-    client_id_header: str = os.getenv("CLIENT_ID_HEADER", "X-Client-Id")
-    user_id_header: str = os.getenv("USER_ID_HEADER", "X-User-Id")
+    database_url: str
+    client_id_header: str
+    user_id_header: str
 
 
 def build_database_url() -> str:
@@ -67,4 +67,13 @@ def build_database_url() -> str:
     return ""
 
 
-settings = Settings()
+def _build_settings() -> Settings:
+    """Build settings from environment variables."""
+    return Settings(
+        database_url=os.getenv("DASHBOARDING_DATABASE_URL", ""),
+        client_id_header=os.getenv("CLIENT_ID_HEADER", "X-Client-Id"),
+        user_id_header=os.getenv("USER_ID_HEADER", "X-User-Id"),
+    )
+
+
+settings = _build_settings()

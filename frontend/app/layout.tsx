@@ -20,7 +20,7 @@ const plexMono = IBM_Plex_Mono({
 })
 
 export const metadata: Metadata = {
-  title: "Killer Metric Studio",
+  title: "Venky's Killer Metrics",
   description: "Dashboard builder for configuring metric tiles.",
 }
 

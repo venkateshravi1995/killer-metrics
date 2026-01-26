@@ -1,0 +1,25 @@
+{
+  "pythonVersion": "3.11",
+  "typeCheckingMode": "basic",
+  "reportMissingImports": false,
+  "reportMissingTypeStubs": false,
+  "exclude": [
+    "**/__pycache__",
+    "**/.venv",
+    "frontend",
+    "metrics-backend/alembic",
+    "metrics-backend/docs",
+    "visuals-backend/alembic",
+    "visuals-backend/docs"
+  ],
+  "executionEnvironments": [
+    {
+      "root": "metrics-backend",
+      "extraPaths": ["metrics-backend"]
+    },
+    {
+      "root": "visuals-backend",
+      "extraPaths": ["visuals-backend"]
+    }
+  ]
+}

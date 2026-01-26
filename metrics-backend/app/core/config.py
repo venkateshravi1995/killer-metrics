@@ -47,16 +47,32 @@ _load_dotenv()
 class Settings:
     """Typed settings loaded from environment variables."""
 
-    database_url: str = os.getenv("DATABASE_URL", "")
-    pg_host: str = os.getenv("PG_HOST", "")
-    pg_port: str = os.getenv("PG_PORT", "5432")
-    pg_database: str = os.getenv("PG_DATABASE", "")
-    pg_user: str = os.getenv("PG_USER", "")
-    pg_password: str = os.getenv("PG_PASSWORD", "")
-    db_pool_size: int = _get_int_env("DB_POOL_SIZE", 10)
-    db_max_overflow: int = _get_int_env("DB_MAX_OVERFLOW", 20)
-    db_pool_timeout: int = _get_int_env("DB_POOL_TIMEOUT", 30)
-    db_pool_recycle: int = _get_int_env("DB_POOL_RECYCLE", 1800)
+    database_url: str
+    pg_host: str
+    pg_port: str
+    pg_database: str
+    pg_user: str
+    pg_password: str
+    db_pool_size: int
+    db_max_overflow: int
+    db_pool_timeout: int
+    db_pool_recycle: int
 
 
-settings = Settings()
+def _build_settings() -> Settings:
+    """Build settings from environment variables."""
+    return Settings(
+        database_url=os.getenv("DATABASE_URL", ""),
+        pg_host=os.getenv("PG_HOST", ""),
+        pg_port=os.getenv("PG_PORT", "5432"),
+        pg_database=os.getenv("PG_DATABASE", ""),
+        pg_user=os.getenv("PG_USER", ""),
+        pg_password=os.getenv("PG_PASSWORD", ""),
+        db_pool_size=_get_int_env("DB_POOL_SIZE", 10),
+        db_max_overflow=_get_int_env("DB_MAX_OVERFLOW", 20),
+        db_pool_timeout=_get_int_env("DB_POOL_TIMEOUT", 30),
+        db_pool_recycle=_get_int_env("DB_POOL_RECYCLE", 1800),
+    )
+
+
+settings = _build_settings()
