@@ -10,12 +10,17 @@ from typing import Any
 
 import httpx
 import jwt
+import logging
 from fastapi import Header, HTTPException, status
 from jwt import PyJWK, PyJWTError
+
+from app.core import config as _config  # noqa: F401
 
 HTTP_STATUS_ERROR_THRESHOLD = 400
 JWKS_CACHE_TTL_SECONDS = 3600
 JWKS_REQUEST_TIMEOUT_SECONDS = 5.0
+
+logger = logging.getLogger(__name__)
 
 _JWKS_CACHE: dict[str, Any] = {}
 _JWKS_LOCK = asyncio.Lock()
@@ -108,12 +113,21 @@ async def _verify_token(token: str) -> dict[str, Any]:
     try:
         header = jwt.get_unverified_header(token)
     except PyJWTError as exc:
+        logger.warning("auth token header decode failed", exc_info=exc)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid auth token.",
         ) from exc
     key_id = header.get("kid")
+    algorithm = header.get("alg") or "EdDSA"
+    allowed_algorithms = {"EdDSA", "RS256", "ES256"}
+    if algorithm not in allowed_algorithms:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid auth token.",
+        )
     if not key_id:
+        logger.warning("auth token missing kid", extra={"alg": header.get("alg")})
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid auth token.",
@@ -125,6 +139,7 @@ async def _verify_token(token: str) -> dict[str, Any]:
         jwks = await _get_jwks(settings)
         signing_key = _select_signing_key(jwks, key_id)
     if signing_key is None:
+        logger.warning("auth token kid not found in jwks", extra={"kid": key_id})
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid auth token.",
@@ -133,12 +148,22 @@ async def _verify_token(token: str) -> dict[str, Any]:
         return jwt.decode(
             token,
             signing_key,
-            algorithms=["EdDSA"],
+            algorithms=[algorithm],
             issuer=settings.issuer or None,
             audience=settings.audience or None,
             options={"verify_aud": bool(settings.audience), "require": ["exp"]},
         )
     except PyJWTError as exc:
+        logger.warning(
+            "auth token verification failed",
+            extra={
+                "kid": key_id,
+                "alg": algorithm,
+                "issuer": settings.issuer,
+                "audience": settings.audience,
+            },
+            exc_info=exc,
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid auth token.",

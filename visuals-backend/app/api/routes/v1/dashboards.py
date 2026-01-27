@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Annotated, Any, cast
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import and_, delete, func, or_, select
 
-from app.core.auth import require_neon_auth
+from app.core.auth import AuthContext, require_neon_auth
 from app.db.schema import Dashboard, DashboardTile
 from app.db.session import get_session
 from app.schemas.dashboards import (
@@ -33,8 +33,6 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
     from sqlalchemy.sql.elements import ColumnElement
-
-    from app.core.auth import AuthContext
 else:
     AsyncSession = Any
 
@@ -144,14 +142,15 @@ def get_request_context(
 async def _get_published_dashboard(
     session: AsyncSession,
     dashboard_id: str,
+    user_id: str,
     client_id: str,
 ) -> Dashboard:
     result = await session.execute(
         select(Dashboard).where(
             Dashboard.id == dashboard_id,
+            Dashboard.user_id == user_id,
             Dashboard.client_id == client_id,
             Dashboard.is_draft.is_(False),
-            Dashboard.user_id == "",
         ),
     )
     item = result.scalar_one_or_none()
@@ -232,7 +231,7 @@ async def create_dashboard(
         dashboard = Dashboard(
             id=dashboard_id,
             client_id=context.client_id,
-            user_id="",
+            user_id=context.user_id,
             is_draft=False,
             name=payload.name,
             description=payload.description,
@@ -242,7 +241,7 @@ async def create_dashboard(
             tile_rows = [
                 DashboardTile(
                     dashboard_id=dashboard_id,
-                    user_id="",
+                    user_id=context.user_id,
                     is_draft=False,
                     tile_id=tile["id"],
                     position=index,
@@ -268,7 +267,7 @@ async def list_dashboards(
         .where(
             Dashboard.client_id == context.client_id,
             Dashboard.is_draft.is_(False),
-            Dashboard.user_id == "",
+            Dashboard.user_id == context.user_id,
         )
         .order_by(Dashboard.updated_at.desc(), Dashboard.id.desc())
         .limit(limit + 1)
@@ -316,7 +315,12 @@ async def get_dashboard(
     context: Annotated[RequestContext, Depends(get_request_context)],
 ) -> DashboardOut:
     """Fetch a published dashboard or user draft."""
-    published = await _get_published_dashboard(context.session, dashboard_id, context.client_id)
+    published = await _get_published_dashboard(
+        context.session,
+        dashboard_id,
+        context.user_id,
+        context.client_id,
+    )
     draft = await _get_draft_dashboard(
         context.session,
         dashboard_id,
@@ -342,7 +346,7 @@ async def get_dashboard(
         context.session,
         [
             DashboardTile.dashboard_id == dashboard_id,
-            DashboardTile.user_id == "",
+            DashboardTile.user_id == context.user_id,
             DashboardTile.is_draft.is_(False),
         ],
     )
@@ -361,6 +365,7 @@ async def update_dashboard(
         published = await _get_published_dashboard(
             context.session,
             dashboard_id,
+            context.user_id,
             context.client_id,
         )
         published.name = payload.name
@@ -369,7 +374,7 @@ async def update_dashboard(
         await context.session.execute(
             delete(DashboardTile).where(
                 DashboardTile.dashboard_id == dashboard_id,
-                DashboardTile.user_id == "",
+                DashboardTile.user_id == context.user_id,
                 DashboardTile.is_draft.is_(False),
             ),
         )
@@ -378,7 +383,7 @@ async def update_dashboard(
                 [
                     DashboardTile(
                         dashboard_id=dashboard_id,
-                        user_id="",
+                        user_id=context.user_id,
                         is_draft=False,
                         tile_id=tile["id"],
                         position=index,
@@ -402,6 +407,7 @@ async def add_tile_to_draft(
         published = await _get_published_dashboard(
             context.session,
             dashboard_id,
+            context.user_id,
             context.client_id,
         )
         draft = await _get_draft_dashboard(
@@ -415,7 +421,7 @@ async def add_tile_to_draft(
                 context.session,
                 [
                     DashboardTile.dashboard_id == dashboard_id,
-                    DashboardTile.user_id == "",
+                    DashboardTile.user_id == context.user_id,
                     DashboardTile.is_draft.is_(False),
                 ],
             )
@@ -475,6 +481,7 @@ async def update_tile_in_draft(
         published = await _get_published_dashboard(
             context.session,
             dashboard_id,
+            context.user_id,
             context.client_id,
         )
         draft = await _get_draft_dashboard(
@@ -488,7 +495,7 @@ async def update_tile_in_draft(
                 context.session,
                 [
                     DashboardTile.dashboard_id == dashboard_id,
-                    DashboardTile.user_id == "",
+                    DashboardTile.user_id == context.user_id,
                     DashboardTile.is_draft.is_(False),
                 ],
             )
@@ -531,6 +538,7 @@ async def delete_tile_from_draft(
         published = await _get_published_dashboard(
             context.session,
             dashboard_id,
+            context.user_id,
             context.client_id,
         )
         draft = await _get_draft_dashboard(
@@ -544,7 +552,7 @@ async def delete_tile_from_draft(
                 context.session,
                 [
                     DashboardTile.dashboard_id == dashboard_id,
-                    DashboardTile.user_id == "",
+                    DashboardTile.user_id == context.user_id,
                     DashboardTile.is_draft.is_(False),
                 ],
             )
@@ -584,6 +592,7 @@ async def update_draft_layout(
         published = await _get_published_dashboard(
             context.session,
             dashboard_id,
+            context.user_id,
             context.client_id,
         )
         draft = await _get_draft_dashboard(
@@ -597,7 +606,7 @@ async def update_draft_layout(
                 context.session,
                 [
                     DashboardTile.dashboard_id == dashboard_id,
-                    DashboardTile.user_id == "",
+                    DashboardTile.user_id == context.user_id,
                     DashboardTile.is_draft.is_(False),
                 ],
             )
@@ -651,6 +660,7 @@ async def update_draft_metadata(
         published = await _get_published_dashboard(
             context.session,
             dashboard_id,
+            context.user_id,
             context.client_id,
         )
         draft = await _get_draft_dashboard(
@@ -664,7 +674,7 @@ async def update_draft_metadata(
                 context.session,
                 [
                     DashboardTile.dashboard_id == dashboard_id,
-                    DashboardTile.user_id == "",
+                    DashboardTile.user_id == context.user_id,
                     DashboardTile.is_draft.is_(False),
                 ],
             )
@@ -699,6 +709,7 @@ async def commit_draft(
         published = await _get_published_dashboard(
             context.session,
             dashboard_id,
+            context.user_id,
             context.client_id,
         )
         draft = await _get_draft_dashboard(
@@ -723,7 +734,7 @@ async def commit_draft(
         await context.session.execute(
             delete(DashboardTile).where(
                 DashboardTile.dashboard_id == dashboard_id,
-                DashboardTile.user_id == "",
+                DashboardTile.user_id == context.user_id,
                 DashboardTile.is_draft.is_(False),
             ),
         )
@@ -732,7 +743,7 @@ async def commit_draft(
                 [
                     DashboardTile(
                         dashboard_id=dashboard_id,
-                        user_id="",
+                        user_id=context.user_id,
                         is_draft=False,
                         tile_id=tile.tile_id,
                         position=tile.position,
@@ -781,7 +792,9 @@ async def delete_dashboard(
         result = await context.session.execute(
             select(Dashboard).where(
                 Dashboard.id == dashboard_id,
+                Dashboard.user_id == context.user_id,
                 Dashboard.client_id == context.client_id,
+                Dashboard.is_draft.is_(False),
             ),
         )
         dashboards_to_delete = result.scalars().all()

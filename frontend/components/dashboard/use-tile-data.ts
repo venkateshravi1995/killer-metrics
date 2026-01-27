@@ -482,6 +482,12 @@ export function useTileData(
     () => getTileDefinition(tile.vizType),
     [tile.vizType]
   )
+  const resolvedDataSource =
+    tileDefinition.type === "donut"
+      ? "aggregate"
+      : tile.dataSource ?? tileDefinition.data.source
+  const resolvedGroupBy =
+    tileDefinition.type === "donut" ? tile.groupBy.slice(0, 1) : tile.groupBy
   const metricKeys = tile.metricKeys.length ? tile.metricKeys : ["metric"]
   const metrics = useMemo(
     () => metricKeys.map((key) => getMetricDefinition(metricsByKey, key)),
@@ -495,23 +501,23 @@ export function useTileData(
       [
         tile.apiBaseUrl,
         tile.vizType,
-        tile.dataSource,
+        resolvedDataSource,
         tile.grain,
         tile.startTime,
         tile.endTime,
         tile.metricKeys.join(","),
-        tile.groupBy.join(","),
+        resolvedGroupBy.join(","),
         filtersKey,
       ].join("|"),
     [
       tile.apiBaseUrl,
       tile.vizType,
-      tile.dataSource,
+      resolvedDataSource,
       tile.grain,
       tile.startTime,
       tile.endTime,
       tile.metricKeys.join(","),
-      tile.groupBy.join(","),
+      resolvedGroupBy.join(","),
       filtersKey,
     ]
   )
@@ -535,12 +541,18 @@ export function useTileData(
 
     const load = async () => {
       try {
-        const dataSource = tile.dataSource ?? tileDefinition.data.source
+        const dataSource = resolvedDataSource
         const resolvedRange = await resolveTimeRange(tile, tileDefinition.data.range)
         const hasRange = resolvedRange !== null
-        const requestTile = resolvedRange
-          ? { ...tile, startTime: resolvedRange.startTime, endTime: resolvedRange.endTime }
-          : tile
+        const baseTile =
+          resolvedRange
+            ? {
+                ...tile,
+                startTime: resolvedRange.startTime,
+                endTime: resolvedRange.endTime,
+              }
+            : tile
+        const requestTile = { ...baseTile, groupBy: resolvedGroupBy }
         if (!requestTile.metricKeys.length) {
           throw new Error("Select at least one metric.")
         }
