@@ -275,8 +275,11 @@ async def get_latest(
     source_grain = source_grains.get(metric_id, requested_grain)
     filter_pairs = parse_dimension_pairs(dimensions)
 
-    time_bucket = build_time_bucket(requested_grain, MetricObservation.time_start_ts).label(
-        "time_start_ts"
+    time_bucket = build_time_bucket(
+        requested_grain,
+        MetricObservation.time_start_ts,
+    ).label(
+        "time_start_ts",
     )
     stmt = (
         select(
@@ -457,6 +460,5 @@ def _build_filter_pairs(filters: list) -> list[tuple[int, int]]:
     """Build dimension_id/value_id pairs from filter payloads."""
     pairs: list[tuple[int, int]] = []
     for flt in filters:
-        for value_id in flt.value_ids:
-            pairs.append((int(flt.dimension_id), int(value_id)))
+        pairs.extend([(int(flt.dimension_id), int(value_id)) for value_id in flt.value_ids])
     return pairs

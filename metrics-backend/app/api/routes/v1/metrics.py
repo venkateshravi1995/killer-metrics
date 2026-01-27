@@ -1,12 +1,12 @@
 """Metric catalog endpoints."""
 
+import hashlib
 from collections.abc import Sequence
 from io import BytesIO
-import hashlib
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 
-from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, Response, UploadFile
 import pandas as pd
+from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, Response, UploadFile
 from sqlalchemy import func, literal, literal_column, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.sql.elements import ColumnElement
@@ -189,8 +189,11 @@ def _normalize_upload_columns(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]
     if len(set(normalized)) != len(normalized):
         duplicates = sorted({name for name in normalized if normalized.count(name) > 1})
         detail = ", ".join(duplicates)
-        raise HTTPException(status_code=400, detail=f"duplicate columns after normalization: {detail}")
-    df = df.rename(columns=dict(zip(df.columns, normalized)))
+        raise HTTPException(
+            status_code=400,
+            detail=f"duplicate columns after normalization: {detail}",
+        )
+    df = df.rename(columns=dict(zip(df.columns, normalized, strict=True)))
     missing = [column for column in REQUIRED_UPLOAD_COLUMNS if column not in df.columns]
     if missing:
         detail = ", ".join(missing)
@@ -434,7 +437,7 @@ async def get_metric_freshness(
 
 
 @router.post("/upload")
-async def upload_metrics_csv(
+async def upload_metrics_csv(  # noqa: C901, PLR0912, PLR0915
     file: Annotated[UploadFile, File()],
     connection: Annotated[PostgresExecutor, Depends(get_connection)],
 ) -> dict:
@@ -478,33 +481,45 @@ async def upload_metrics_csv(
         detail = ", ".join(sorted(unsupported))
         raise HTTPException(status_code=400, detail=f"unsupported grain(s): {detail}")
 
-    start_ts = pd.to_datetime(df["time_start_ts"], errors="coerce", utc=True)
-    if start_ts.isna().any():
+    start_ts = cast(
+        "pd.Series",
+        pd.to_datetime(df["time_start_ts"], errors="coerce", utc=True),
+    )
+    if bool(start_ts.isna().any()):
         raise HTTPException(status_code=400, detail="invalid time_start_ts values")
-    end_raw = df["time_end_ts"]
-    end_ts = pd.to_datetime(end_raw, errors="coerce", utc=True)
+    end_raw = cast("pd.Series", df["time_end_ts"])
+    end_ts = cast(
+        "pd.Series",
+        pd.to_datetime(end_raw, errors="coerce", utc=True),
+    )
     invalid_end = end_raw.notna() & end_ts.isna()
-    if invalid_end.any():
+    if bool(invalid_end.any()):
         raise HTTPException(status_code=400, detail="invalid time_end_ts values")
-    if ((~end_ts.isna()) & (end_ts <= start_ts)).any():
+    if bool(((~end_ts.isna()) & (end_ts <= start_ts)).any()):
         raise HTTPException(status_code=400, detail="time_end_ts must be after time_start_ts")
 
     df["time_start_ts"] = start_ts.dt.to_pydatetime()
     df["time_end_ts"] = end_ts.dt.to_pydatetime()
 
-    value_num = pd.to_numeric(df["value_num"], errors="coerce")
-    if value_num.isna().any():
+    value_num = cast(
+        "pd.Series",
+        pd.to_numeric(df["value_num"], errors="coerce"),
+    )
+    if bool(value_num.isna().any()):
         raise HTTPException(status_code=400, detail="invalid value_num values")
     df["value_num"] = value_num.astype(float)
 
-    sample_size = pd.to_numeric(df["sample_size"], errors="coerce")
+    sample_size = cast(
+        "pd.Series",
+        pd.to_numeric(df["sample_size"], errors="coerce"),
+    )
     invalid_sample = df["sample_size"].notna() & sample_size.isna()
-    if invalid_sample.any():
+    if bool(invalid_sample.any()):
         raise HTTPException(status_code=400, detail="invalid sample_size values")
     df["sample_size"] = sample_size
 
     df["is_estimated"] = df["is_estimated"].map(_normalize_boolean)
-    if df["is_estimated"].isna().any():
+    if bool(df["is_estimated"].isna().any()):
         raise HTTPException(status_code=400, detail="invalid is_estimated values")
 
     for column in dimension_columns:
@@ -513,35 +528,46 @@ async def upload_metrics_csv(
 
     metric_rows: list[dict[str, object]] = []
     for metric_key, group in df.groupby("metric_key"):
+        metric_key_str = str(metric_key)
         metric_rows.append(
             {
-                "metric_key": metric_key,
-                "metric_name": _unique_field(group, "metric_name", metric_key, required=True),
+                "metric_key": metric_key_str,
+                "metric_name": _unique_field(
+                    group,
+                    "metric_name",
+                    metric_key_str,
+                    required=True,
+                ),
                 "metric_description": _unique_field(
                     group,
                     "metric_description",
-                    metric_key,
+                    metric_key_str,
                     required=False,
                 ),
                 "metric_type": _unique_field(
                     group,
                     "metric_type",
-                    metric_key,
+                    metric_key_str,
                     required=True,
                     lower=True,
                 ),
-                "unit": _unique_field(group, "unit", metric_key, required=False),
+                "unit": _unique_field(
+                    group,
+                    "unit",
+                    metric_key_str,
+                    required=False,
+                ),
                 "directionality": _unique_field(
                     group,
                     "directionality",
-                    metric_key,
+                    metric_key_str,
                     required=False,
                     lower=True,
                 ),
                 "aggregation": _unique_field(
                     group,
                     "aggregation",
-                    metric_key,
+                    metric_key_str,
                     required=True,
                     lower=True,
                 ),
@@ -573,7 +599,7 @@ async def upload_metrics_csv(
                 },
             )
             result = await session.execute(stmt)
-            metrics_upserted = result.rowcount or 0
+            metrics_upserted = cast("Any", result).rowcount or 0
 
         if dimension_rows:
             stmt = pg_insert(DimensionDefinition).values(dimension_rows)
@@ -608,13 +634,16 @@ async def upload_metrics_csv(
             if not values:
                 continue
             dimension_id = dimension_ids[dimension_key]
-            for value in dict.fromkeys(values):
-                dimension_value_rows.append(
+            unique_values = list(dict.fromkeys(values))
+            dimension_value_rows.extend(
+                [
                     {
                         "dimension_id": dimension_id,
                         "value": str(value),
-                    },
-                )
+                    }
+                    for value in unique_values
+                ],
+            )
 
         dimension_values_inserted = 0
         if dimension_value_rows:
@@ -623,7 +652,7 @@ async def upload_metrics_csv(
                 index_elements=[DimensionValue.dimension_id, DimensionValue.value],
             )
             result = await session.execute(stmt)
-            dimension_values_inserted = result.rowcount or 0
+            dimension_values_inserted = cast("Any", result).rowcount or 0
 
         dimension_value_ids: dict[tuple[int, str], int] = {}
         for dimension_key in dimension_columns:
@@ -668,7 +697,7 @@ async def upload_metrics_csv(
             )
             stmt = stmt.on_conflict_do_nothing(index_elements=[DimensionSet.set_hash])
             result = await session.execute(stmt)
-            dimension_sets_inserted = result.rowcount or 0
+            dimension_sets_inserted = cast("Any", result).rowcount or 0
 
         set_ids: dict[str, int] = {}
         if dimension_sets:
@@ -679,9 +708,9 @@ async def upload_metrics_csv(
             set_ids = {row["set_hash"]: int(row["set_id"]) for row in rows}
 
         set_value_rows: list[dict[str, object]] = []
-        for set_hash, pairs in dimension_sets.items():
+        for set_hash, set_pairs in dimension_sets.items():
             set_id = set_ids[set_hash]
-            for dimension_id, value_id in pairs:
+            for dimension_id, value_id in set_pairs:
                 set_value_rows.append(
                     {
                         "set_id": set_id,
@@ -721,7 +750,7 @@ async def upload_metrics_csv(
                 index_elements=[MetricSeries.metric_id, MetricSeries.grain, MetricSeries.set_id],
             )
             result = await session.execute(stmt)
-            metric_series_inserted = result.rowcount or 0
+            metric_series_inserted = cast("Any", result).rowcount or 0
 
         series_ids: dict[tuple[int, str, int], int] = {}
         if series_keys:
@@ -773,7 +802,7 @@ async def upload_metrics_csv(
         if observation_rows:
             stmt = pg_insert(MetricObservation).values(observation_rows)
             result = await session.execute(stmt)
-            observations_inserted = result.rowcount or 0
+            observations_inserted = cast("Any", result).rowcount or 0
 
         await session.commit()
     except Exception:

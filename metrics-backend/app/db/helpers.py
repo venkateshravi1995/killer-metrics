@@ -4,8 +4,8 @@ from collections.abc import Iterable
 
 from fastapi import HTTPException
 from sqlalchemy import func, literal_column, select
-from sqlalchemy.sql.selectable import Select
 from sqlalchemy.sql.elements import ColumnElement
+from sqlalchemy.sql.selectable import Select
 
 from app.db.postgres import PostgresExecutor
 from app.db.schema import DimensionDefinition, MetricDefinition, MetricSeries

@@ -5,8 +5,6 @@ Revises: 0001_create_dashboard_tables
 Create Date: 2026-01-27 00:00:00.000000
 """
 
-import sqlalchemy as sa
-
 from alembic import op
 
 # revision identifiers, used by Alembic.
