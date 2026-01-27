@@ -8,14 +8,10 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.api.routes.v1.utils import (
-    apply_dimension_pairs,
-    apply_dimension_value_filters,
-    apply_group_by,
-    parse_dimension_pairs,
-)
+from app.api.routes.v1.utils import apply_dimension_pairs, apply_group_by, parse_dimension_pairs
 from app.api.schemas.queries import AggregateQuery, TimeseriesQuery, TopKQuery
 from app.db.helpers import (
+    build_time_bucket,
     is_supported_grain,
     normalize_grain,
     resolve_dimension_ids,
@@ -56,12 +52,10 @@ def _build_aggregation_groups(
 async def _resolve_dimension_context(
     connection: PostgresExecutor,
     group_by: list[str],
-    filters: list,
 ) -> tuple[list[str], dict[str, int]]:
-    """Resolve dimension IDs needed for filters and group-bys."""
+    """Resolve dimension IDs needed for group-bys."""
     group_by_labels = list(dict.fromkeys(group_by))
-    filter_keys = [flt.dimension_key for flt in filters]
-    dimension_keys = list(dict.fromkeys(group_by_labels + filter_keys))
+    dimension_keys = list(dict.fromkeys(group_by_labels))
     if not dimension_keys:
         return group_by_labels, {}
     dimension_ids = await resolve_dimension_ids(connection, dimension_keys)
@@ -188,8 +182,8 @@ async def post_timeseries(
     group_by_labels, dimension_ids = await _resolve_dimension_context(
         connection,
         payload.group_by,
-        payload.filters,
     )
+    filter_pairs = _build_filter_pairs(payload.filters or [])
 
     series_map: dict[str, dict] = {}
 
@@ -198,7 +192,7 @@ async def post_timeseries(
         if not metric_ids_by_grain:
             continue
         agg_expr = _aggregation_expression(aggregation).label("value")
-        time_bucket = func.date_trunc(
+        time_bucket = build_time_bucket(
             requested_grain,
             MetricObservation.time_start_ts,
         ).label("time_start_ts")
@@ -221,13 +215,13 @@ async def post_timeseries(
                 )
             )
 
-            stmt = await apply_dimension_value_filters(
-                stmt,
-                connection,
-                payload.filters or [],
-                "timeseries",
-                dimension_ids,
-            )
+            if filter_pairs:
+                stmt = await apply_dimension_pairs(
+                    stmt,
+                    connection,
+                    filter_pairs,
+                    "timeseries",
+                )
 
             stmt, group_by_labels = await apply_group_by(
                 stmt,
@@ -279,11 +273,14 @@ async def get_latest(
         requested_grain,
     )
     source_grain = source_grains.get(metric_id, requested_grain)
-    filters = parse_dimension_pairs(dimensions)
+    filter_pairs = parse_dimension_pairs(dimensions)
 
+    time_bucket = build_time_bucket(requested_grain, MetricObservation.time_start_ts).label(
+        "time_start_ts"
+    )
     stmt = (
         select(
-            MetricObservation.time_start_ts,
+            time_bucket,
             MetricObservation.value_num,
         )
         .join(
@@ -296,7 +293,8 @@ async def get_latest(
         )
     )
 
-    stmt = await apply_dimension_pairs(stmt, connection, filters, "latest")
+    if filter_pairs:
+        stmt = await apply_dimension_pairs(stmt, connection, filter_pairs, "latest")
 
     stmt = stmt.order_by(MetricObservation.time_start_ts.desc()).limit(1)
     result = await connection.execute(stmt)
@@ -332,8 +330,8 @@ async def post_aggregate(
     group_by_labels, dimension_ids = await _resolve_dimension_context(
         connection,
         payload.group_by,
-        payload.filters,
     )
+    filter_pairs = _build_filter_pairs(payload.filters or [])
 
     items: list[dict] = []
 
@@ -360,13 +358,13 @@ async def post_aggregate(
                 )
             )
 
-            stmt = await apply_dimension_value_filters(
-                stmt,
-                connection,
-                payload.filters or [],
-                "agg",
-                dimension_ids,
-            )
+            if filter_pairs:
+                stmt = await apply_dimension_pairs(
+                    stmt,
+                    connection,
+                    filter_pairs,
+                    "agg",
+                )
 
             stmt, group_by_labels = await apply_group_by(
                 stmt,
@@ -427,12 +425,9 @@ async def post_topk(
         )
     )
 
-    stmt = await apply_dimension_value_filters(
-        stmt,
-        connection,
-        payload.filters or [],
-        "topk",
-    )
+    filter_pairs = _build_filter_pairs(payload.filters or [])
+    if filter_pairs:
+        stmt = await apply_dimension_pairs(stmt, connection, filter_pairs, "topk")
 
     stmt, group_by_labels = await apply_group_by(
         stmt,
@@ -456,3 +451,12 @@ async def post_topk(
         "grain": requested_grain,
         "items": items,
     }
+
+
+def _build_filter_pairs(filters: list) -> list[tuple[int, int]]:
+    """Build dimension_id/value_id pairs from filter payloads."""
+    pairs: list[tuple[int, int]] = []
+    for flt in filters:
+        for value_id in flt.value_ids:
+            pairs.append((int(flt.dimension_id), int(value_id)))
+    return pairs

@@ -45,9 +45,14 @@ export type DimensionsResponse = {
   offset: number
 }
 
+export type DimensionValueItem = {
+  id: number
+  value: string
+}
+
 export type DimensionValuesResponse = {
   dimension_key: string
-  items: string[]
+  items: DimensionValueItem[]
   limit: number
   offset: number
 }
@@ -128,11 +133,11 @@ export function normalizeDashboardBaseUrl(value: string) {
 
 function buildDimensionPairs(filters: Filter[]) {
   return filters
-    .filter((filter) => filter.dimension && filter.values.length)
+    .filter((filter) => filter.dimensionId && (filter.valueIds ?? []).length)
     .flatMap((filter) =>
-      Array.from(new Set(filter.values))
-        .filter((value) => value)
-        .map((value) => `${filter.dimension}:${value}`)
+      Array.from(new Set(filter.valueIds ?? []))
+        .filter((valueId) => Number.isFinite(valueId))
+        .map((valueId) => `${filter.dimensionId}:${valueId}`)
     )
 }
 
@@ -203,19 +208,8 @@ export function buildDimensionValuesUrl(
     endTime?: string
   }
 ) {
-  const params = new URLSearchParams()
-  if (options?.metricKey) {
-    params.set("metric_key", options.metricKey)
-  }
-  if (options?.startTime) {
-    params.set("start_time", options.startTime)
-  }
-  if (options?.endTime) {
-    params.set("end_time", options.endTime)
-  }
   const encodedKey = encodeURIComponent(dimensionKey)
-  const suffix = params.toString() ? `?${params.toString()}` : ""
-  return `${normalizeBaseUrl(baseUrl)}/v1/dimensions/${encodedKey}/values${suffix}`
+  return `${normalizeBaseUrl(baseUrl)}/v1/dimensions/${encodedKey}/values`
 }
 
 export function buildAvailabilityUrl(baseUrl: string, tile: TileConfig) {
@@ -228,11 +222,16 @@ export function buildAvailabilityUrl(baseUrl: string, tile: TileConfig) {
   return `${normalizeBaseUrl(baseUrl)}/v1/metrics/${metricKey}/availability?${params.toString()}`
 }
 
-export async function fetchTimeseries(baseUrl: string, tile: TileConfig) {
+export async function fetchTimeseries(
+  baseUrl: string,
+  tile: TileConfig,
+  options?: { signal?: AbortSignal }
+) {
   const url = `${normalizeBaseUrl(baseUrl)}/v1/query/timeseries`
   return fetchJson<TimeseriesResponse>(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    signal: options?.signal,
     body: JSON.stringify({
       metric_keys: tile.metricKeys,
       grain: tile.grain,
@@ -240,18 +239,22 @@ export async function fetchTimeseries(baseUrl: string, tile: TileConfig) {
       end_time: tile.endTime,
       group_by: tile.groupBy,
       filters: tile.filters
-        .filter((filter) => filter.dimension && filter.values.length)
+        .filter((filter) => filter.dimensionId && (filter.valueIds ?? []).length)
         .map((filter) => ({
-          dimension_key: filter.dimension,
-          values: filter.values,
+          dimension_id: filter.dimensionId,
+          value_ids: filter.valueIds ?? [],
         })),
     }),
   })
 }
 
-export async function fetchLatest(baseUrl: string, tile: TileConfig) {
+export async function fetchLatest(
+  baseUrl: string,
+  tile: TileConfig,
+  options?: { signal?: AbortSignal }
+) {
   const url = buildLatestUrl(baseUrl, tile)
-  return fetchJson<LatestResponse>(url)
+  return fetchJson<LatestResponse>(url, { signal: options?.signal })
 }
 
 export async function fetchMetrics(baseUrl: string) {
@@ -273,20 +276,54 @@ export async function fetchDimensionValues(
     endTime?: string
   }
 ) {
-  const url = buildDimensionValuesUrl(baseUrl, dimensionKey, options)
-  return fetchJson<DimensionValuesResponse>(url)
+  const url = `${normalizeBaseUrl(baseUrl)}/v1/dimensions/values/search`
+  const response = await fetchJson<{
+    items: Array<{ dimension_key: string; value_id: number; value: string }>
+    limit: number
+    offset: number
+  }>(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      filters: {
+        dimension_key: [dimensionKey],
+        metric_key: options?.metricKey,
+        start_time: options?.startTime,
+        end_time: options?.endTime,
+      },
+      limit: 500,
+      offset: 0,
+    }),
+  })
+  return {
+    dimension_key: dimensionKey,
+    items: response.items
+      .filter((item) => item.dimension_key === dimensionKey)
+      .map((item) => ({ id: item.value_id, value: item.value })),
+    limit: response.limit,
+    offset: response.offset,
+  }
 }
 
-export async function fetchAvailability(baseUrl: string, tile: TileConfig) {
+export async function fetchAvailability(
+  baseUrl: string,
+  tile: TileConfig,
+  options?: { signal?: AbortSignal }
+) {
   const url = buildAvailabilityUrl(baseUrl, tile)
-  return fetchJson<AvailabilityResponse>(url)
+  return fetchJson<AvailabilityResponse>(url, { signal: options?.signal })
 }
 
-export async function fetchAggregate(baseUrl: string, tile: TileConfig) {
+export async function fetchAggregate(
+  baseUrl: string,
+  tile: TileConfig,
+  options?: { signal?: AbortSignal }
+) {
   const url = `${normalizeBaseUrl(baseUrl)}/v1/query/aggregate`
   return fetchJson<AggregateResponse>(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    signal: options?.signal,
     body: JSON.stringify({
       metric_keys: tile.metricKeys,
       grain: tile.grain,
@@ -294,10 +331,10 @@ export async function fetchAggregate(baseUrl: string, tile: TileConfig) {
       end_time: tile.endTime,
       group_by: tile.groupBy,
       filters: tile.filters
-        .filter((filter) => filter.dimension && filter.values.length)
+        .filter((filter) => filter.dimensionId && (filter.valueIds ?? []).length)
         .map((filter) => ({
-          dimension_key: filter.dimension,
-          values: filter.values,
+          dimension_id: filter.dimensionId,
+          value_ids: filter.valueIds ?? [],
         })),
     }),
   })

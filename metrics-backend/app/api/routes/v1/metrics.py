@@ -12,14 +12,11 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.sql.elements import ColumnElement
 from sqlalchemy.sql.selectable import Select
 
-from app.api.routes.v1.utils import (
-    apply_dimension_pairs,
-    parse_dimension_pairs,
-    set_cache_control,
-)
+from app.api.routes.v1.utils import apply_dimension_pairs, parse_dimension_pairs, set_cache_control
 from app.api.schemas.metrics import MetricListQuery, MetricSearchFilters, MetricSearchRequest
 from app.db.helpers import (
     apply_pagination,
+    build_time_bucket,
     is_supported_grain,
     normalize_grain,
     resolve_metric_id,
@@ -356,9 +353,9 @@ async def get_metric_availability(
         requested_grain,
     )
     source_grain = source_grains.get(metric_id, requested_grain)
-    filters = parse_dimension_pairs(dimensions)
+    filter_pairs = parse_dimension_pairs(dimensions)
 
-    time_bucket = func.date_trunc(requested_grain, MetricObservation.time_start_ts)
+    time_bucket = build_time_bucket(requested_grain, MetricObservation.time_start_ts)
     stmt = (
         select(
             func.min(time_bucket).label("min_time_start_ts"),
@@ -374,7 +371,8 @@ async def get_metric_availability(
         )
     )
 
-    stmt = await apply_dimension_pairs(stmt, connection, filters, "availability")
+    if filter_pairs:
+        stmt = await apply_dimension_pairs(stmt, connection, filter_pairs, "availability")
 
     result = await connection.execute(stmt)
     row = result.mappings().first()
@@ -404,7 +402,7 @@ async def get_metric_freshness(
         requested_grain,
     )
     source_grain = source_grains.get(metric_id, requested_grain)
-    filters = parse_dimension_pairs(dimensions)
+    filter_pairs = parse_dimension_pairs(dimensions)
 
     stmt = (
         select(
@@ -421,7 +419,8 @@ async def get_metric_freshness(
         )
     )
 
-    stmt = await apply_dimension_pairs(stmt, connection, filters, "freshness")
+    if filter_pairs:
+        stmt = await apply_dimension_pairs(stmt, connection, filter_pairs, "freshness")
 
     stmt = stmt.order_by(MetricObservation.time_start_ts.desc()).limit(1)
     result = await connection.execute(stmt)

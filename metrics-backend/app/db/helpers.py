@@ -3,13 +3,14 @@
 from collections.abc import Iterable
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, literal_column, select
 from sqlalchemy.sql.selectable import Select
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.db.postgres import PostgresExecutor
 from app.db.schema import DimensionDefinition, MetricDefinition, MetricSeries
 
-GRAIN_ORDER = ("hour", "day", "week", "month")
+GRAIN_ORDER = ("30m", "hour", "day", "week", "biweek", "month", "quarter")
 GRAIN_RANK = {grain: idx for idx, grain in enumerate(GRAIN_ORDER)}
 
 
@@ -21,6 +22,21 @@ def normalize_grain(grain: str) -> str:
 def is_supported_grain(grain: str) -> bool:
     """Return whether a grain is supported."""
     return normalize_grain(grain) in GRAIN_RANK
+
+
+def build_time_bucket(grain: str, column: ColumnElement) -> ColumnElement:
+    """Return a time bucket expression for supported grains."""
+    normalized = normalize_grain(grain)
+    if normalized == "30m":
+        interval = literal_column("interval '30 minutes'")
+        half_hour = func.floor(func.date_part("minute", column) / 30) * interval
+        return func.date_trunc("hour", column) + half_hour
+    if normalized == "biweek":
+        interval = literal_column("interval '1 week'")
+        week_start = func.date_trunc("week", column)
+        week_offset = (func.extract("week", column) % 2) * interval
+        return week_start - week_offset
+    return func.date_trunc(normalized, column)
 
 
 async def resolve_metric_id(connection: PostgresExecutor, metric_key: str) -> int:

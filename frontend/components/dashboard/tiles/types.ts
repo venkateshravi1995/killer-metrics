@@ -10,7 +10,7 @@ import type {
   TileDataSource,
   VizType,
 } from "../types"
-import type { AvailabilityResponse } from "../api"
+import type { AvailabilityResponse, DimensionValueItem } from "../api"
 
 export type TileRenderProps = {
   tile: TileConfig
@@ -97,7 +97,7 @@ export type TileConfiguratorProps = {
   availability: AvailabilityResponse | null
   availabilityStatus: "idle" | "loading" | "ready" | "error"
   availabilityError: string | null
-  dimensionValues: Record<string, string[]>
+  dimensionValues: Record<string, DimensionValueItem[]>
   dimensionValuesStatus: Record<string, "loading" | "ready" | "error">
   addFilter: () => void
   updateFilter: (filterId: string, updates: Partial<Filter>) => void

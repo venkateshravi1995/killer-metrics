@@ -7,6 +7,7 @@ import {
   CreateDashboardModal,
   DeleteDashboardModal,
   EditDashboardModal,
+  TilePickerModal,
 } from "./modals"
 import { useDashboardBuilderState, type DashboardBuilderInitialData } from "./state"
 
@@ -39,6 +40,9 @@ export default function DashboardBuilder({ initialData }: DashboardBuilderProps)
     deleteModalOpen,
     deleteTarget,
     configuratorOpen,
+    configuratorMode,
+    tilePickerOpen,
+    pendingTile,
     isCompactView,
     metricsByKey,
     dimensionsByKey,
@@ -53,10 +57,12 @@ export default function DashboardBuilder({ initialData }: DashboardBuilderProps)
     setCreateDescription,
     setCreateModalOpen,
     setRefreshIntervalMs,
-    addTile,
+    openTilePicker,
+    closeTilePicker,
+    startTileDraft,
     duplicateTile,
     removeTile,
-    updateTile,
+    commitConfiguratorTile,
     commitLayout,
     handleDashboardSelect,
     handleRefreshDashboard,
@@ -69,6 +75,7 @@ export default function DashboardBuilder({ initialData }: DashboardBuilderProps)
     handleCreateDashboard,
     handleConfigureTile,
     closeConfigurator,
+    handleBackToTilePicker,
     handleSeriesChange,
   } = useDashboardBuilderState(initialData)
 
@@ -94,7 +101,7 @@ export default function DashboardBuilder({ initialData }: DashboardBuilderProps)
         onRefreshIntervalChange={setRefreshIntervalMs}
         onSaveDashboard={handleSaveDashboard}
         onDiscardDraft={handleDiscardDraft}
-        onAddTile={addTile}
+        onAddTile={openTilePicker}
       />
 
       <DashboardGrid
@@ -147,14 +154,23 @@ export default function DashboardBuilder({ initialData }: DashboardBuilderProps)
         onDelete={handleDeleteDashboard}
       />
 
+      <TilePickerModal
+        open={tilePickerOpen}
+        metricsAvailable={metrics.length > 0}
+        onClose={closeTilePicker}
+        onSelect={startTileDraft}
+      />
+
       <ConfiguratorDrawer
         open={configuratorOpen}
-        tile={selectedTile}
-        series={selectedSeries}
+        tile={configuratorMode === "create" ? pendingTile : selectedTile}
+        series={configuratorMode === "create" ? [] : selectedSeries}
         metrics={metrics}
         dimensions={dimensions}
-        onUpdate={updateTile}
+        onUpdate={commitConfiguratorTile}
         onClose={closeConfigurator}
+        onBack={configuratorMode === "create" ? handleBackToTilePicker : undefined}
+        mode={configuratorMode}
       />
     </div>
   )

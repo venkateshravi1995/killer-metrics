@@ -752,9 +752,14 @@ export function DefaultTileConfigurator({
                     onValueChange={(value) => {
                       const dimension = value as DimensionKey
                       const values = dimensionValues[dimension] ?? []
+                      const dimensionId =
+                        dimensions.find((item) => item.key === dimension)?.id ?? 0
+                      const firstValue = values[0]
                       updateFilter(filter.id, {
                         dimension,
-                        values: values.length ? [values[0]] : [],
+                        dimensionId,
+                        values: firstValue ? [firstValue.value] : [],
+                        valueIds: firstValue ? [firstValue.id] : [],
                       })
                     }}
                   >
@@ -786,23 +791,33 @@ export function DefaultTileConfigurator({
                           Loading values...
                         </DropdownMenuItem>
                       ) : (dimensionValues[filter.dimension] ?? []).length ? (
-                        (dimensionValues[filter.dimension] ?? []).map((value) => {
-                          const isChecked = filter.values.includes(value)
+                        (dimensionValues[filter.dimension] ?? []).map((item) => {
+                          const isChecked = (filter.valueIds ?? []).includes(item.id)
                           return (
                             <DropdownMenuCheckboxItem
-                              key={value}
+                              key={item.id}
                               checked={isChecked}
                               onCheckedChange={(checked) => {
-                                const next = new Set(filter.values)
+                                const values = dimensionValues[filter.dimension] ?? []
+                                const valueById = new Map(
+                                  values.map((entry) => [entry.id, entry.value])
+                                )
+                                const nextIds = new Set(filter.valueIds ?? [])
                                 if (checked) {
-                                  next.add(value)
+                                  nextIds.add(item.id)
                                 } else {
-                                  next.delete(value)
+                                  nextIds.delete(item.id)
                                 }
-                                updateFilter(filter.id, { values: Array.from(next) })
+                                const nextValues = Array.from(nextIds)
+                                  .map((valueId) => valueById.get(valueId))
+                                  .filter((value): value is string => Boolean(value))
+                                updateFilter(filter.id, {
+                                  values: nextValues,
+                                  valueIds: Array.from(nextIds),
+                                })
                               }}
                             >
-                              {value}
+                              {item.value}
                             </DropdownMenuCheckboxItem>
                           )
                         })

@@ -7,32 +7,13 @@ import type {
   TileConfig,
 } from "../types"
 import { getTileDefinition } from "../tiles/registry"
-import type { DimensionCatalogItem, DashboardSummary, MetricCatalogItem } from "../api"
+import type { DimensionCatalogItem, MetricCatalogItem } from "../api"
 
 export const gridBreakpoints = { lg: 1200, md: 996, sm: 768, xs: 560, xxs: 0 }
 export const gridCols = { lg: 12, md: 10, sm: 6, xs: 1, xxs: 1 }
 export type BreakpointKey = keyof typeof gridBreakpoints
 
 let runtimeId = 0
-const DASHBOARD_CACHE_VERSION = 1
-const DASHBOARD_CACHE_KEY = "metric-killer:dashboard-cache:v1"
-
-export type DashboardCache = {
-  version: number
-  updatedAt: string
-  activeDashboardId: string | null
-  dashboards: DashboardSummary[]
-  current: {
-    id: string
-    name: string
-    description: string
-    tiles: TileConfig[]
-    selectedTileId: string | null
-    editMode: boolean
-    hasDraft: boolean
-  } | null
-}
-
 export function createId(prefix: string) {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
     return `${prefix}-${crypto.randomUUID()}`
@@ -43,36 +24,6 @@ export function createId(prefix: string) {
 
 function createSeedId(index: number) {
   return `tile-seed-${index + 1}`
-}
-
-export function readDashboardCache(): DashboardCache | null {
-  if (typeof window === "undefined") {
-    return null
-  }
-  try {
-    const raw = window.localStorage.getItem(DASHBOARD_CACHE_KEY)
-    if (!raw) {
-      return null
-    }
-    const parsed = JSON.parse(raw) as DashboardCache
-    if (parsed?.version !== DASHBOARD_CACHE_VERSION) {
-      return null
-    }
-    return parsed
-  } catch {
-    return null
-  }
-}
-
-export function writeDashboardCache(cache: DashboardCache) {
-  if (typeof window === "undefined") {
-    return
-  }
-  try {
-    window.localStorage.setItem(DASHBOARD_CACHE_KEY, JSON.stringify(cache))
-  } catch {
-    // Ignore storage failures to avoid breaking the UI.
-  }
 }
 
 export function getTileMinSize(tile: TileConfig) {
@@ -218,13 +169,20 @@ export function normalizeTileConfig(tile: TileConfig) {
     const legacyFilter = filter as TileFilter & {
       value?: string
       values?: string[]
+      valueIds?: number[]
+      dimensionId?: number
     }
     const values = Array.isArray(legacyFilter.values)
       ? legacyFilter.values
       : legacyFilter.value
         ? [legacyFilter.value]
         : []
-    return { ...filter, values }
+    const valueIds = Array.isArray(legacyFilter.valueIds)
+      ? legacyFilter.valueIds
+      : []
+    const dimensionId =
+      typeof legacyFilter.dimensionId === "number" ? legacyFilter.dimensionId : 0
+    return { ...filter, values, valueIds, dimensionId }
   })
   return {
     ...sanitizedTile,
@@ -265,6 +223,7 @@ export function mapDimensionDefinition(
   item: DimensionCatalogItem
 ): DimensionDefinition {
   return {
+    id: item.dimension_id,
     key: item.dimension_key,
     label: item.dimension_name,
     description: item.dimension_description ?? "",

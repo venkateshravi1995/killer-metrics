@@ -4,7 +4,6 @@ import { useMemo, useState } from "react"
 import { Filter, Search, Sparkles } from "lucide-react"
 
 import { normalizeBaseUrl, type MetricCatalogItem } from "@/components/dashboard/api"
-import { ThemeToggle } from "@/components/theme-toggle"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -201,34 +200,32 @@ export default function MetricsSearchPage() {
   return (
     <div className="app-shell min-h-screen">
       <div className="canvas-grid min-h-screen">
-        <header className="topbar">
-          <div className="flex flex-col gap-4 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-center gap-3">
-              <span className="flex size-11 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10 text-primary shadow-sm">
-                <Sparkles className="size-5" />
-              </span>
-              <div className="space-y-1">
-                <p className="text-[10px] uppercase tracking-[0.32em] text-muted-foreground">
-                  Metrics Search
-                </p>
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-display text-lg font-semibold">
-                    Find the right metric fast
-                  </span>
-                  <Badge
-                    variant="secondary"
-                    className="rounded-full text-[10px] uppercase"
-                  >
-                    Search Console
-                  </Badge>
+        <main className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-6 pb-16 pt-8">
+          <section className="rounded-2xl border border-border/60 bg-background/70 px-5 py-4 shadow-sm backdrop-blur">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-3">
+                <span className="flex size-11 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10 text-primary shadow-sm">
+                  <Sparkles className="size-5" />
+                </span>
+                <div className="space-y-1">
+                  <p className="text-[10px] uppercase tracking-[0.32em] text-muted-foreground">
+                    Metrics Search
+                  </p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-display text-lg font-semibold">
+                      Find the right metric fast
+                    </span>
+                    <Badge
+                      variant="secondary"
+                      className="rounded-full text-[10px] uppercase"
+                    >
+                      Search Console
+                    </Badge>
+                  </div>
                 </div>
               </div>
             </div>
-            <ThemeToggle />
-          </div>
-        </header>
-
-        <main className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-6 pb-16 pt-8">
+          </section>
           <Card className="bg-card/85">
             <CardHeader>
               <CardTitle className="text-lg">Search metrics</CardTitle>

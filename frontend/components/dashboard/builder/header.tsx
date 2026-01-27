@@ -3,12 +3,18 @@
 import {
   Clock,
   LineChart,
+  LayoutDashboard,
+  LogOut,
   Pencil,
   Plus,
   RefreshCw,
   RotateCcw,
   Save,
+  Search,
+  Settings,
   Trash2,
+  Upload,
+  User,
 } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
@@ -18,11 +24,13 @@ import Link from "next/link"
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
+  DropdownMenuShortcut,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import {
@@ -350,18 +358,55 @@ export function DashboardHeader({
                     </span>
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-44">
-                  <DropdownMenuLabel>Account</DropdownMenuLabel>
+                <DropdownMenuContent align="end" className="w-56">
+                  <DropdownMenuLabel className="text-[10px] font-semibold uppercase tracking-[0.28em] text-muted-foreground">
+                    Workspace
+                  </DropdownMenuLabel>
+                  <DropdownMenuGroup>
+                    <DropdownMenuItem asChild>
+                      <Link href="/">
+                        <LayoutDashboard className="size-4" />
+                        Dashboards
+                      </Link>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem asChild>
+                      <Link href="/settings/metrics-upload">
+                        <Upload className="size-4" />
+                        Upload metrics
+                        <DropdownMenuShortcut>CSV</DropdownMenuShortcut>
+                      </Link>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem asChild>
+                      <Link href="/metrics-search">
+                        <Search className="size-4" />
+                        Metric catalog
+                      </Link>
+                    </DropdownMenuItem>
+                  </DropdownMenuGroup>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem asChild>
-                    <Link href="/account/profile">Profile</Link>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem asChild>
-                    <Link href="/account/settings">Settings</Link>
-                  </DropdownMenuItem>
+                  <DropdownMenuLabel className="text-[10px] font-semibold uppercase tracking-[0.28em] text-muted-foreground">
+                    Account
+                  </DropdownMenuLabel>
+                  <DropdownMenuGroup>
+                    <DropdownMenuItem asChild>
+                      <Link href="/account/profile">
+                        <User className="size-4" />
+                        Profile
+                      </Link>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem asChild>
+                      <Link href="/account/settings">
+                        <Settings className="size-4" />
+                        Settings
+                      </Link>
+                    </DropdownMenuItem>
+                  </DropdownMenuGroup>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem variant="destructive" asChild>
-                    <Link href="/auth/sign-out">Logout</Link>
+                    <Link href="/auth/sign-out">
+                      <LogOut className="size-4" />
+                      Logout
+                    </Link>
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
