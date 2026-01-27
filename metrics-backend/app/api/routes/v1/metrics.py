@@ -183,9 +183,9 @@ def _split_csv_int(values: list[str] | None) -> list[int]:
     return parsed
 
 
-def _normalize_upload_columns(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
+def _normalize_upload_columns(frame: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
     """Normalize CSV column names and return dimension columns."""
-    normalized = [str(column).strip().lower() for column in df.columns]
+    normalized = [str(column).strip().lower() for column in frame.columns]
     if len(set(normalized)) != len(normalized):
         duplicates = sorted({name for name in normalized if normalized.count(name) > 1})
         detail = ", ".join(duplicates)
@@ -193,13 +193,15 @@ def _normalize_upload_columns(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]
             status_code=400,
             detail=f"duplicate columns after normalization: {detail}",
         )
-    df = df.rename(columns=dict(zip(df.columns, normalized, strict=True)))
-    missing = [column for column in REQUIRED_UPLOAD_COLUMNS if column not in df.columns]
+    frame = frame.rename(columns=dict(zip(frame.columns, normalized, strict=True)))
+    missing = [column for column in REQUIRED_UPLOAD_COLUMNS if column not in frame.columns]
     if missing:
         detail = ", ".join(missing)
         raise HTTPException(status_code=400, detail=f"missing required columns: {detail}")
-    dimension_columns = [column for column in df.columns if column not in REQUIRED_UPLOAD_COLUMNS]
-    return df, dimension_columns
+    dimension_columns = [
+        column for column in frame.columns if column not in REQUIRED_UPLOAD_COLUMNS
+    ]
+    return frame, dimension_columns
 
 
 def _normalize_boolean(value: object) -> bool | None:
@@ -208,7 +210,7 @@ def _normalize_boolean(value: object) -> bool | None:
         return False
     if isinstance(value, bool):
         return value
-    if isinstance(value, (int, float)):
+    if isinstance(value, int | float):
         return bool(int(value))
     if isinstance(value, str):
         cleaned = value.strip().lower()
@@ -450,32 +452,32 @@ async def upload_metrics_csv(  # noqa: C901, PLR0912, PLR0915
     if not payload:
         raise HTTPException(status_code=400, detail="file is empty")
     try:
-        df = pd.read_csv(BytesIO(payload))
+        frame = pd.read_csv(BytesIO(payload))
     except Exception as exc:  # pragma: no cover - pandas error formatting is varied
         raise HTTPException(status_code=400, detail="invalid CSV file") from exc
-    if df.empty:
+    if frame.empty:
         raise HTTPException(status_code=400, detail="file contains no rows")
 
-    df, dimension_columns = _normalize_upload_columns(df)
+    frame, dimension_columns = _normalize_upload_columns(frame)
 
     for column in REQUIRED_UPLOAD_VALUES:
-        series = df[column].astype("string").str.strip()
+        series = frame[column].astype("string").str.strip()
         if series.isna().any() or (series == "").any():
             raise HTTPException(status_code=400, detail=f"{column} is required")
 
-    df["metric_key"] = df["metric_key"].astype("string").str.strip().str.lower()
-    df["metric_name"] = df["metric_name"].astype("string").str.strip()
-    df["metric_description"] = (
-        df["metric_description"].astype("string").str.strip().replace("", pd.NA)
+    frame["metric_key"] = frame["metric_key"].astype("string").str.strip().str.lower()
+    frame["metric_name"] = frame["metric_name"].astype("string").str.strip()
+    frame["metric_description"] = (
+        frame["metric_description"].astype("string").str.strip().replace("", pd.NA)
     )
-    df["metric_type"] = df["metric_type"].astype("string").str.strip().str.lower()
-    df["unit"] = df["unit"].astype("string").str.strip().replace("", pd.NA)
-    df["directionality"] = df["directionality"].astype("string").str.strip().str.lower()
-    df["directionality"] = df["directionality"].replace("", pd.NA)
-    df["aggregation"] = df["aggregation"].astype("string").str.strip().str.lower()
-    df["grain"] = df["grain"].astype("string").str.strip().str.lower()
+    frame["metric_type"] = frame["metric_type"].astype("string").str.strip().str.lower()
+    frame["unit"] = frame["unit"].astype("string").str.strip().replace("", pd.NA)
+    frame["directionality"] = frame["directionality"].astype("string").str.strip().str.lower()
+    frame["directionality"] = frame["directionality"].replace("", pd.NA)
+    frame["aggregation"] = frame["aggregation"].astype("string").str.strip().str.lower()
+    frame["grain"] = frame["grain"].astype("string").str.strip().str.lower()
 
-    grains = set(df["grain"].dropna().tolist())
+    grains = set(frame["grain"].dropna().tolist())
     unsupported = [grain for grain in grains if not is_supported_grain(grain)]
     if unsupported:
         detail = ", ".join(sorted(unsupported))
@@ -483,11 +485,11 @@ async def upload_metrics_csv(  # noqa: C901, PLR0912, PLR0915
 
     start_ts = cast(
         "pd.Series",
-        pd.to_datetime(df["time_start_ts"], errors="coerce", utc=True),
+        pd.to_datetime(frame["time_start_ts"], errors="coerce", utc=True),
     )
     if bool(start_ts.isna().any()):
         raise HTTPException(status_code=400, detail="invalid time_start_ts values")
-    end_raw = cast("pd.Series", df["time_end_ts"])
+    end_raw = cast("pd.Series", frame["time_end_ts"])
     end_ts = cast(
         "pd.Series",
         pd.to_datetime(end_raw, errors="coerce", utc=True),
@@ -498,36 +500,36 @@ async def upload_metrics_csv(  # noqa: C901, PLR0912, PLR0915
     if bool(((~end_ts.isna()) & (end_ts <= start_ts)).any()):
         raise HTTPException(status_code=400, detail="time_end_ts must be after time_start_ts")
 
-    df["time_start_ts"] = start_ts.dt.to_pydatetime()
-    df["time_end_ts"] = end_ts.dt.to_pydatetime()
+    frame["time_start_ts"] = start_ts.dt.to_pydatetime()
+    frame["time_end_ts"] = end_ts.dt.to_pydatetime()
 
     value_num = cast(
         "pd.Series",
-        pd.to_numeric(df["value_num"], errors="coerce"),
+        pd.to_numeric(frame["value_num"], errors="coerce"),
     )
     if bool(value_num.isna().any()):
         raise HTTPException(status_code=400, detail="invalid value_num values")
-    df["value_num"] = value_num.astype(float)
+    frame["value_num"] = value_num.astype(float)
 
     sample_size = cast(
         "pd.Series",
-        pd.to_numeric(df["sample_size"], errors="coerce"),
+        pd.to_numeric(frame["sample_size"], errors="coerce"),
     )
-    invalid_sample = df["sample_size"].notna() & sample_size.isna()
+    invalid_sample = frame["sample_size"].notna() & sample_size.isna()
     if bool(invalid_sample.any()):
         raise HTTPException(status_code=400, detail="invalid sample_size values")
-    df["sample_size"] = sample_size
+    frame["sample_size"] = sample_size
 
-    df["is_estimated"] = df["is_estimated"].map(_normalize_boolean)
-    if bool(df["is_estimated"].isna().any()):
+    frame["is_estimated"] = frame["is_estimated"].map(_normalize_boolean)
+    if bool(frame["is_estimated"].isna().any()):
         raise HTTPException(status_code=400, detail="invalid is_estimated values")
 
     for column in dimension_columns:
-        df[column] = df[column].astype("string").str.strip()
-        df[column] = df[column].replace("", pd.NA)
+        frame[column] = frame[column].astype("string").str.strip()
+        frame[column] = frame[column].replace("", pd.NA)
 
     metric_rows: list[dict[str, object]] = []
-    for metric_key, group in df.groupby("metric_key"):
+    for metric_key, group in frame.groupby("metric_key"):
         metric_key_str = str(metric_key)
         metric_rows.append(
             {
@@ -630,7 +632,7 @@ async def upload_metrics_csv(  # noqa: C901, PLR0912, PLR0915
 
         dimension_value_rows: list[dict[str, object]] = []
         for dimension_key in dimension_columns:
-            values = df[dimension_key].dropna().tolist()
+            values = frame[dimension_key].dropna().tolist()
             if not values:
                 continue
             dimension_id = dimension_ids[dimension_key]
@@ -656,7 +658,7 @@ async def upload_metrics_csv(  # noqa: C901, PLR0912, PLR0915
 
         dimension_value_ids: dict[tuple[int, str], int] = {}
         for dimension_key in dimension_columns:
-            values = df[dimension_key].dropna().tolist()
+            values = frame[dimension_key].dropna().tolist()
             if not values:
                 continue
             dimension_id = dimension_ids[dimension_key]
@@ -671,7 +673,7 @@ async def upload_metrics_csv(  # noqa: C901, PLR0912, PLR0915
 
         dimension_sets: dict[str, list[tuple[int, int]]] = {}
         row_set_hashes: list[str] = []
-        records = df.to_dict(orient="records")
+        records = frame.to_dict(orient="records")
         for record in records:
             pairs: list[tuple[str, str, int, int]] = []
             for dimension_key in dimension_columns:
@@ -810,7 +812,7 @@ async def upload_metrics_csv(  # noqa: C901, PLR0912, PLR0915
         raise
 
     return {
-        "rows": len(df.index),
+        "rows": len(frame.index),
         "metrics_upserted": metrics_upserted,
         "dimensions_upserted": len(dimension_rows),
         "dimension_values_inserted": dimension_values_inserted,
