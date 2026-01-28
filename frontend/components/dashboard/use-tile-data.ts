@@ -7,6 +7,10 @@ import {
   fetchAggregate,
   fetchLatest,
   fetchTimeseries,
+  type AggregateResponse,
+  type AvailabilityResponse,
+  type LatestResponse,
+  type TimeseriesResponse,
 } from "./api"
 import { getTileDefinition } from "./tiles/registry"
 import type { TileRangeRequirement } from "./tiles/types"
@@ -43,58 +47,96 @@ type TileDataStatus = "loading" | "live" | "error"
 type TileDataState = {
   status: TileDataStatus
   data: TileSeriesData
+  lastUpdated: number | null
+  isRefreshing: boolean
   error?: string
 }
 
-const TILE_DATA_CACHE_VERSION = 1
-const TILE_DATA_CACHE_PREFIX = "metric-killer:tile-data:v1:"
+const CACHE_STALE_MS = 60_000
+type CacheEntry<T> = {
+  expiresAt: number
+  value?: T
+  inFlight?: Promise<T>
+  lastUpdated?: number
+}
+const tileDataCache = new Map<string, CacheEntry<TileSeriesData>>()
+const availabilityCache = new Map<string, CacheEntry<AvailabilityResponse>>()
+const latestCache = new Map<string, CacheEntry<LatestResponse>>()
+const timeseriesCache = new Map<string, CacheEntry<TimeseriesResponse>>()
+const aggregateCache = new Map<string, CacheEntry<AggregateResponse>>()
 
-type TileDataCacheRecord = {
-  version: number
-  updatedAt: string
-  data: TileSeriesData
+function getCacheKey(parts: Array<string | number | undefined | null>) {
+  return parts.filter((part) => part !== undefined && part !== null).join("|")
 }
 
-function buildTileCacheKey(requestKey: string) {
-  return `${TILE_DATA_CACHE_PREFIX}${encodeURIComponent(requestKey)}`
+type CacheResult<T> = {
+  value?: T
+  lastUpdated?: number
+  isStale: boolean
+  revalidate?: Promise<T>
 }
 
-function readTileDataCache(requestKey: string): TileSeriesData | null {
-  if (typeof window === "undefined") {
-    return null
-  }
-  try {
-    const raw = window.localStorage.getItem(buildTileCacheKey(requestKey))
-    if (!raw) {
-      return null
+function fetchWithCache<T>(
+  cache: Map<string, CacheEntry<T>>,
+  key: string,
+  fetcher: (signal?: AbortSignal) => Promise<T>,
+  signal?: AbortSignal
+): CacheResult<T> {
+  const now = Date.now()
+  const existing = cache.get(key)
+  if (existing && existing.value) {
+    const isFresh = existing.expiresAt > now
+    if (isFresh) {
+      return { value: existing.value, lastUpdated: existing.lastUpdated, isStale: false }
     }
-    const parsed = JSON.parse(raw) as TileDataCacheRecord
-    if (parsed?.version !== TILE_DATA_CACHE_VERSION || !parsed.data) {
-      return null
+    if (!existing.inFlight) {
+      const inFlight = fetcher(signal)
+        .then((value) => {
+          cache.set(key, {
+            value,
+            expiresAt: Date.now() + CACHE_STALE_MS,
+            lastUpdated: Date.now(),
+          })
+          return value
+        })
+        .catch((error) => {
+          cache.set(key, { ...existing, inFlight: undefined })
+          throw error
+        })
+      cache.set(key, { ...existing, inFlight })
+      return {
+        value: existing.value,
+        lastUpdated: existing.lastUpdated,
+        isStale: true,
+        revalidate: inFlight,
+      }
     }
-    return parsed.data
-  } catch {
-    return null
+    return {
+      value: existing.value,
+      lastUpdated: existing.lastUpdated,
+      isStale: true,
+      revalidate: existing.inFlight,
+    }
   }
-}
 
-function writeTileDataCache(requestKey: string, data: TileSeriesData) {
-  if (typeof window === "undefined") {
-    return
+  if (existing?.inFlight) {
+    return { isStale: true, revalidate: existing.inFlight }
   }
-  try {
-    const payload: TileDataCacheRecord = {
-      version: TILE_DATA_CACHE_VERSION,
-      updatedAt: new Date().toISOString(),
-      data,
-    }
-    window.localStorage.setItem(
-      buildTileCacheKey(requestKey),
-      JSON.stringify(payload)
-    )
-  } catch {
-    // Ignore storage failures to avoid breaking the UI.
-  }
+  const inFlight = fetcher(signal)
+    .then((value) => {
+      cache.set(key, {
+        value,
+        expiresAt: Date.now() + CACHE_STALE_MS,
+        lastUpdated: Date.now(),
+      })
+      return value
+    })
+    .catch((error) => {
+      cache.delete(key)
+      throw error
+    })
+  cache.set(key, { expiresAt: now + CACHE_STALE_MS, inFlight })
+  return { isStale: true, revalidate: inFlight }
 }
 
 const dateFormatsShort: Record<Grain, Intl.DateTimeFormatOptions> = {
@@ -172,9 +214,18 @@ function clampDate(value: Date, minDate?: Date, maxDate?: Date) {
   return value
 }
 
+function getCacheLastUpdated<T>(cache: Map<string, CacheEntry<T>>, key: string) {
+  return cache.get(key)?.lastUpdated ?? null
+}
+
+function isAbortError(error: unknown) {
+  return error instanceof DOMException && error.name === "AbortError"
+}
+
 async function resolveTimeRange(
   tile: TileConfig,
-  rangeRequirement: TileRangeRequirement
+  rangeRequirement: TileRangeRequirement,
+  signal?: AbortSignal
 ) {
   const startDate = parseIsoDate(tile.startTime)
   const endDate = parseIsoDate(tile.endTime)
@@ -186,7 +237,27 @@ async function resolveTimeRange(
     return null
   }
 
-  const availability = await fetchAvailability(tile.apiBaseUrl, tile)
+  const availabilityKey = getCacheKey([
+    "availability",
+    tile.apiBaseUrl,
+    tile.metricKeys[0],
+    tile.grain,
+    buildFiltersKey(tile.filters),
+  ])
+  const availabilityResult = fetchWithCache(
+    availabilityCache,
+    availabilityKey,
+    (fetchSignal) => fetchAvailability(tile.apiBaseUrl, tile, { signal: fetchSignal }),
+    signal
+  )
+  const availability =
+    availabilityResult.value ??
+    (availabilityResult.revalidate
+      ? await availabilityResult.revalidate
+      : undefined)
+  if (!availability) {
+    return null
+  }
   const minDate = parseIsoDate(availability.min_time_start_ts)
   const maxDate = parseIsoDate(availability.max_time_start_ts)
   const resolvedStart = startDate ?? minDate
@@ -206,8 +277,18 @@ async function resolveTimeRange(
 
 function buildFiltersKey(filters: Filter[]) {
   return filters
-    .filter((filter) => filter.dimension && filter.values.length)
-    .map((filter) => `${filter.dimension}:${filter.values.join(",")}`)
+    .filter((filter) => filter.dimensionId && (filter.valueIds ?? []).length)
+    .map((filter) => {
+      const values = Array.from(new Set(filter.valueIds ?? []))
+        .filter((valueId) => Number.isFinite(valueId))
+        .sort((a, b) => a - b)
+      return {
+        dimensionId: String(filter.dimensionId),
+        values,
+      }
+    })
+    .sort((a, b) => a.dimensionId.localeCompare(b.dimensionId))
+    .map((filter) => `${filter.dimensionId}:${filter.values.join(",")}`)
     .join("|")
 }
 
@@ -482,6 +563,12 @@ export function useTileData(
     () => getTileDefinition(tile.vizType),
     [tile.vizType]
   )
+  const resolvedDataSource =
+    tileDefinition.type === "donut"
+      ? "aggregate"
+      : tile.dataSource ?? tileDefinition.data.source
+  const resolvedGroupBy =
+    tileDefinition.type === "donut" ? tile.groupBy.slice(0, 1) : tile.groupBy
   const metricKeys = tile.metricKeys.length ? tile.metricKeys : ["metric"]
   const metrics = useMemo(
     () => metricKeys.map((key) => getMetricDefinition(metricsByKey, key)),
@@ -495,112 +582,349 @@ export function useTileData(
       [
         tile.apiBaseUrl,
         tile.vizType,
-        tile.dataSource,
+        resolvedDataSource,
         tile.grain,
         tile.startTime,
         tile.endTime,
         tile.metricKeys.join(","),
-        tile.groupBy.join(","),
+        resolvedGroupBy.join(","),
         filtersKey,
       ].join("|"),
     [
       tile.apiBaseUrl,
       tile.vizType,
-      tile.dataSource,
+      resolvedDataSource,
       tile.grain,
       tile.startTime,
       tile.endTime,
       tile.metricKeys.join(","),
-      tile.groupBy.join(","),
+      resolvedGroupBy.join(","),
       filtersKey,
     ]
   )
 
-  const cachedData = useMemo(() => readTileDataCache(requestKey), [requestKey])
-
   const [state, setState] = useState<TileDataState>(() => ({
-    status: cachedData ? "live" : "loading",
-    data: cachedData ?? createEmptyData(metrics),
+    status: "loading",
+    data: createEmptyData(metrics),
+    lastUpdated: null,
+    isRefreshing: false,
     error: undefined,
   }))
 
   useEffect(() => {
     let isActive = true
+    const controller = new AbortController()
+    const { signal } = controller
     setState((prev) => ({
-      status: cachedData ? "live" : "loading",
-      data:
-        cachedData ?? (prev.data.metrics.length ? prev.data : createEmptyData(metrics)),
+      status: prev.data.metrics.length ? "live" : "loading",
+      data: prev.data.metrics.length ? prev.data : createEmptyData(metrics),
+      lastUpdated: prev.lastUpdated ?? null,
+      isRefreshing: false,
       error: undefined,
     }))
 
+    const setLiveData = (
+      data: TileSeriesData,
+      lastUpdated: number | null,
+      isRefreshing: boolean
+    ) => {
+      if (!isActive || signal.aborted) {
+        return
+      }
+      setState({ status: "live", data, lastUpdated, isRefreshing })
+    }
+
+    const finalizeData = (data: TileSeriesData, groupBy: string[]) => {
+      if (tile.vizType === "donut" && resolvedDataSource === "aggregate") {
+        return {
+          ...data,
+          series: buildCategorySeries(
+            data.aggregates,
+            groupBy,
+            data.primaryMetric.key
+          ),
+        }
+      }
+      return data
+    }
+
     const load = async () => {
       try {
-        const dataSource = tile.dataSource ?? tileDefinition.data.source
-        const resolvedRange = await resolveTimeRange(tile, tileDefinition.data.range)
+        const dataSource = resolvedDataSource
+        const resolvedRange = await resolveTimeRange(
+          tile,
+          tileDefinition.data.range,
+          signal
+        )
         const hasRange = resolvedRange !== null
-        const requestTile = resolvedRange
-          ? { ...tile, startTime: resolvedRange.startTime, endTime: resolvedRange.endTime }
-          : tile
+        const baseTile =
+          resolvedRange
+            ? {
+                ...tile,
+                startTime: resolvedRange.startTime,
+                endTime: resolvedRange.endTime,
+              }
+            : tile
+        const requestTile = { ...baseTile, groupBy: resolvedGroupBy }
         if (!requestTile.metricKeys.length) {
           throw new Error("Select at least one metric.")
         }
-        let data: TileSeriesData
+        let data: TileSeriesData | null = null
         if (dataSource === "aggregate") {
           if (!hasRange) {
             throw new Error("Select a start and end time or use the available range.")
           }
-          const response = await fetchAggregate(tile.apiBaseUrl, requestTile)
-          data = buildAggregateData(requestTile, metricsByKey, response.groups)
+          const aggregateKey = getCacheKey([
+            "aggregate",
+            tile.apiBaseUrl,
+            requestTile.metricKeys.join(","),
+            requestTile.grain,
+            requestTile.startTime,
+            requestTile.endTime,
+            requestTile.groupBy.join(","),
+            filtersKey,
+          ])
+          const aggregateResult = fetchWithCache(
+            aggregateCache,
+            aggregateKey,
+            (fetchSignal) =>
+              fetchAggregate(tile.apiBaseUrl, requestTile, { signal: fetchSignal }),
+            signal
+          )
+          if (aggregateResult.value) {
+            data = finalizeData(
+              buildAggregateData(
+                requestTile,
+                metricsByKey,
+                aggregateResult.value.groups
+              ),
+              requestTile.groupBy
+            )
+            setLiveData(
+              data,
+              aggregateResult.lastUpdated ?? getCacheLastUpdated(aggregateCache, aggregateKey),
+              Boolean(aggregateResult.revalidate)
+            )
+          }
+          if (aggregateResult.revalidate) {
+            const response = await aggregateResult.revalidate
+            data = finalizeData(
+              buildAggregateData(requestTile, metricsByKey, response.groups),
+              requestTile.groupBy
+            )
+            setLiveData(
+              data,
+              getCacheLastUpdated(aggregateCache, aggregateKey),
+              false
+            )
+          }
         } else if (dataSource === "timeseries") {
           if (!hasRange) {
             throw new Error("Select a start and end time or use the available range.")
           }
-          const response = await fetchTimeseries(tile.apiBaseUrl, requestTile)
-          data = buildTimeseriesData(requestTile, metricsByKey, response.series)
+          const timeseriesKey = getCacheKey([
+            "timeseries",
+            tile.apiBaseUrl,
+            requestTile.metricKeys.join(","),
+            requestTile.grain,
+            requestTile.startTime,
+            requestTile.endTime,
+            requestTile.groupBy.join(","),
+            filtersKey,
+          ])
+          const timeseriesResult = fetchWithCache(
+            timeseriesCache,
+            timeseriesKey,
+            (fetchSignal) =>
+              fetchTimeseries(tile.apiBaseUrl, requestTile, { signal: fetchSignal }),
+            signal
+          )
+          if (timeseriesResult.value) {
+            data = finalizeData(
+              buildTimeseriesData(
+                requestTile,
+                metricsByKey,
+                timeseriesResult.value.series
+              ),
+              requestTile.groupBy
+            )
+            setLiveData(
+              data,
+              timeseriesResult.lastUpdated ??
+                getCacheLastUpdated(timeseriesCache, timeseriesKey),
+              Boolean(timeseriesResult.revalidate)
+            )
+          }
+          if (timeseriesResult.revalidate) {
+            const response = await timeseriesResult.revalidate
+            data = finalizeData(
+              buildTimeseriesData(requestTile, metricsByKey, response.series),
+              requestTile.groupBy
+            )
+            setLiveData(
+              data,
+              getCacheLastUpdated(timeseriesCache, timeseriesKey),
+              false
+            )
+          }
         } else {
           if (!hasRange) {
-            const latest = await fetchLatest(tile.apiBaseUrl, tile)
-            data = buildLatestData(primaryMetric, latest.value)
+            const latestKey = getCacheKey([
+              "latest",
+              tile.apiBaseUrl,
+              tile.metricKeys[0],
+              tile.grain,
+              filtersKey,
+            ])
+            const latestResult = fetchWithCache(
+              latestCache,
+              latestKey,
+              (fetchSignal) =>
+                fetchLatest(tile.apiBaseUrl, tile, { signal: fetchSignal }),
+              signal
+            )
+            if (latestResult.value) {
+              data = finalizeData(
+                buildLatestData(primaryMetric, latestResult.value.value),
+                requestTile.groupBy
+              )
+              setLiveData(
+                data,
+                latestResult.lastUpdated ?? getCacheLastUpdated(latestCache, latestKey),
+                Boolean(latestResult.revalidate)
+              )
+            }
+            if (latestResult.revalidate) {
+              const latest = await latestResult.revalidate
+              data = finalizeData(
+                buildLatestData(primaryMetric, latest.value),
+                requestTile.groupBy
+              )
+              setLiveData(
+                data,
+                getCacheLastUpdated(latestCache, latestKey),
+                false
+              )
+            }
           } else {
-            const response = await fetchTimeseries(tile.apiBaseUrl, requestTile)
+            const timeseriesKey = getCacheKey([
+              "timeseries",
+              tile.apiBaseUrl,
+              requestTile.metricKeys.join(","),
+              requestTile.grain,
+              requestTile.startTime,
+              requestTile.endTime,
+              requestTile.groupBy.join(","),
+              filtersKey,
+            ])
+            const timeseriesResult = fetchWithCache(
+              timeseriesCache,
+              timeseriesKey,
+              (fetchSignal) =>
+                fetchTimeseries(tile.apiBaseUrl, requestTile, { signal: fetchSignal }),
+              signal
+            )
+            const useTimeseriesValue = (value: TimeseriesResponse) =>
+              finalizeData(
+                buildTimeseriesData(requestTile, metricsByKey, value.series),
+                requestTile.groupBy
+              )
+            const applyTimeseries = (value: TimeseriesResponse) => {
+              data = useTimeseriesValue(value)
+              setLiveData(
+                data,
+                getCacheLastUpdated(timeseriesCache, timeseriesKey),
+                false
+              )
+            }
+            const hasCachedTimeseries = Boolean(timeseriesResult.value)
+            if (timeseriesResult.value) {
+              const cached = timeseriesResult.value
+              if (cached.series.length > 0) {
+                data = useTimeseriesValue(cached)
+                setLiveData(
+                  data,
+                  timeseriesResult.lastUpdated ??
+                    getCacheLastUpdated(timeseriesCache, timeseriesKey),
+                  Boolean(timeseriesResult.revalidate)
+                )
+              }
+            }
+            const response = timeseriesResult.revalidate
+              ? await timeseriesResult.revalidate
+              : timeseriesResult.value
+            if (!response) {
+              throw new Error("Failed to load live data.")
+            }
             if (response.series.length === 0) {
-              const latest = await fetchLatest(tile.apiBaseUrl, tile)
-              data = buildLatestData(primaryMetric, latest.value)
+              const latestKey = getCacheKey([
+                "latest",
+                tile.apiBaseUrl,
+                tile.metricKeys[0],
+                tile.grain,
+                filtersKey,
+              ])
+              const latestResult = fetchWithCache(
+                latestCache,
+                latestKey,
+                (fetchSignal) =>
+                  fetchLatest(tile.apiBaseUrl, tile, { signal: fetchSignal }),
+                signal
+              )
+              if (latestResult.value) {
+                data = finalizeData(
+                  buildLatestData(primaryMetric, latestResult.value.value),
+                  requestTile.groupBy
+                )
+                setLiveData(
+                  data,
+                  latestResult.lastUpdated ??
+                    getCacheLastUpdated(latestCache, latestKey),
+                  Boolean(latestResult.revalidate)
+                )
+              }
+              if (latestResult.revalidate) {
+                const latest = await latestResult.revalidate
+                data = finalizeData(
+                  buildLatestData(primaryMetric, latest.value),
+                  requestTile.groupBy
+                )
+                setLiveData(
+                  data,
+                  getCacheLastUpdated(latestCache, latestKey),
+                  false
+                )
+              }
             } else {
-              data = buildTimeseriesData(requestTile, metricsByKey, response.series)
+              if (!hasCachedTimeseries) {
+                applyTimeseries(response)
+              } else if (timeseriesResult.revalidate) {
+                applyTimeseries(response)
+              }
             }
           }
         }
-        if (tile.vizType === "donut" && dataSource === "aggregate") {
-          data = {
-            ...data,
-            series: buildCategorySeries(
-              data.aggregates,
-              requestTile.groupBy,
-              data.primaryMetric.key
-            ),
-          }
-        }
-        if (!isActive) {
-          return
-        }
-        writeTileDataCache(requestKey, data)
-        setState({ status: "live", data })
       } catch (error) {
-        if (!isActive) {
+        if (!isActive || signal.aborted || isAbortError(error)) {
           return
         }
         const message =
           error instanceof Error ? error.message : "Failed to load live data."
-        setState((prev) => ({ ...prev, status: "error", error: message }))
+        setState((prev) => ({
+          ...prev,
+          status: "error",
+          error: message,
+          isRefreshing: false,
+        }))
       }
     }
 
     load()
     return () => {
       isActive = false
+      controller.abort()
     }
-  }, [requestKey, cachedData, metrics, metricsByKey, primaryMetric, tileDefinition])
+  }, [requestKey, metrics, metricsByKey, primaryMetric, tileDefinition])
 
   const resolvedState = useMemo(() => {
     const { data } = state

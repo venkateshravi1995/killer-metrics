@@ -1,28 +1,37 @@
 """Metric catalog endpoints."""
 
+import hashlib
 from collections.abc import Sequence
-from typing import Annotated, Any
+from io import BytesIO
+from typing import Annotated, Any, cast
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response
+import pandas as pd
+from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, Response, UploadFile
 from sqlalchemy import func, literal, literal_column, or_, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.sql.elements import ColumnElement
 from sqlalchemy.sql.selectable import Select
 
-from app.api.routes.v1.utils import (
-    apply_dimension_pairs,
-    parse_dimension_pairs,
-    set_cache_control,
-)
+from app.api.routes.v1.utils import apply_dimension_pairs, parse_dimension_pairs, set_cache_control
 from app.api.schemas.metrics import MetricListQuery, MetricSearchFilters, MetricSearchRequest
 from app.db.helpers import (
     apply_pagination,
+    build_time_bucket,
     is_supported_grain,
     normalize_grain,
     resolve_metric_id,
     resolve_metric_source_grains,
 )
 from app.db.postgres import PostgresExecutor
-from app.db.schema import MetricDefinition, MetricObservation, MetricSeries
+from app.db.schema import (
+    DimensionDefinition,
+    DimensionSet,
+    DimensionSetValue,
+    DimensionValue,
+    MetricDefinition,
+    MetricObservation,
+    MetricSeries,
+)
 from app.db.session import get_connection
 
 router = APIRouter(prefix="/v1/metrics", tags=["metrics"])
@@ -33,6 +42,32 @@ SEARCH_FIELD_WEIGHTS = {
     "metric_type": "B",
     "metric_description": "C",
 }
+
+REQUIRED_UPLOAD_COLUMNS = (
+    "metric_key",
+    "metric_name",
+    "metric_description",
+    "metric_type",
+    "unit",
+    "directionality",
+    "aggregation",
+    "grain",
+    "time_start_ts",
+    "time_end_ts",
+    "value_num",
+    "sample_size",
+    "is_estimated",
+)
+
+REQUIRED_UPLOAD_VALUES = (
+    "metric_key",
+    "metric_name",
+    "metric_type",
+    "aggregation",
+    "grain",
+    "time_start_ts",
+    "value_num",
+)
 
 
 def _apply_metric_filters(stmt: Select, filters: MetricSearchFilters) -> Select:
@@ -148,6 +183,75 @@ def _split_csv_int(values: list[str] | None) -> list[int]:
     return parsed
 
 
+def _normalize_upload_columns(frame: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
+    """Normalize CSV column names and return dimension columns."""
+    normalized = [str(column).strip().lower() for column in frame.columns]
+    if len(set(normalized)) != len(normalized):
+        duplicates = sorted({name for name in normalized if normalized.count(name) > 1})
+        detail = ", ".join(duplicates)
+        raise HTTPException(
+            status_code=400,
+            detail=f"duplicate columns after normalization: {detail}",
+        )
+    frame = frame.rename(columns=dict(zip(frame.columns, normalized, strict=True)))
+    missing = [column for column in REQUIRED_UPLOAD_COLUMNS if column not in frame.columns]
+    if missing:
+        detail = ", ".join(missing)
+        raise HTTPException(status_code=400, detail=f"missing required columns: {detail}")
+    dimension_columns = [
+        column for column in frame.columns if column not in REQUIRED_UPLOAD_COLUMNS
+    ]
+    return frame, dimension_columns
+
+
+def _normalize_boolean(value: object) -> bool | None:
+    """Normalize truthy values into booleans; return None for invalid input."""
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return False
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int | float):
+        return bool(int(value))
+    if isinstance(value, str):
+        cleaned = value.strip().lower()
+        if cleaned in {"true", "t", "yes", "y", "1"}:
+            return True
+        if cleaned in {"false", "f", "no", "n", "0", ""}:
+            return False
+    return None
+
+
+def _unique_field(
+    group: pd.DataFrame,
+    field: str,
+    metric_key: str,
+    *,
+    required: bool,
+    lower: bool = False,
+) -> str | None:
+    values = group[field].dropna().astype("string").str.strip()
+    values = values[values != ""]
+    if lower:
+        values = values.str.lower()
+    unique_values = list(dict.fromkeys(values.tolist()))
+    if len(unique_values) > 1:
+        raise HTTPException(
+            status_code=400,
+            detail=f"conflicting {field} values for metric_key: {metric_key}",
+        )
+    if required and not unique_values:
+        raise HTTPException(
+            status_code=400,
+            detail=f"missing {field} for metric_key: {metric_key}",
+        )
+    return unique_values[0] if unique_values else None
+
+
+def _build_set_hash(pairs: list[tuple[str, str]]) -> str:
+    payload = "|".join(f"{key}={value}" for key, value in pairs)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 @router.get("")
 async def list_metrics(
     response: Response,
@@ -254,9 +358,9 @@ async def get_metric_availability(
         requested_grain,
     )
     source_grain = source_grains.get(metric_id, requested_grain)
-    filters = parse_dimension_pairs(dimensions)
+    filter_pairs = parse_dimension_pairs(dimensions)
 
-    time_bucket = func.date_trunc(requested_grain, MetricObservation.time_start_ts)
+    time_bucket = build_time_bucket(requested_grain, MetricObservation.time_start_ts)
     stmt = (
         select(
             func.min(time_bucket).label("min_time_start_ts"),
@@ -272,7 +376,8 @@ async def get_metric_availability(
         )
     )
 
-    stmt = await apply_dimension_pairs(stmt, connection, filters, "availability")
+    if filter_pairs:
+        stmt = await apply_dimension_pairs(stmt, connection, filter_pairs, "availability")
 
     result = await connection.execute(stmt)
     row = result.mappings().first()
@@ -302,7 +407,7 @@ async def get_metric_freshness(
         requested_grain,
     )
     source_grain = source_grains.get(metric_id, requested_grain)
-    filters = parse_dimension_pairs(dimensions)
+    filter_pairs = parse_dimension_pairs(dimensions)
 
     stmt = (
         select(
@@ -319,7 +424,8 @@ async def get_metric_freshness(
         )
     )
 
-    stmt = await apply_dimension_pairs(stmt, connection, filters, "freshness")
+    if filter_pairs:
+        stmt = await apply_dimension_pairs(stmt, connection, filter_pairs, "freshness")
 
     stmt = stmt.order_by(MetricObservation.time_start_ts.desc()).limit(1)
     result = await connection.execute(stmt)
@@ -329,4 +435,388 @@ async def get_metric_freshness(
         "grain": requested_grain,
         "latest_time_start_ts": row["latest_time_start_ts"] if row else None,
         "latest_ingested_ts": row["latest_ingested_ts"] if row else None,
+    }
+
+
+@router.post("/upload")
+async def upload_metrics_csv(  # noqa: C901, PLR0912, PLR0915
+    file: Annotated[UploadFile, File()],
+    connection: Annotated[PostgresExecutor, Depends(get_connection)],
+) -> dict:
+    """Upload metric observations from a CSV file."""
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="file is required")
+    if not file.filename.lower().endswith(".csv"):
+        raise HTTPException(status_code=400, detail="file must be a CSV")
+    payload = await file.read()
+    if not payload:
+        raise HTTPException(status_code=400, detail="file is empty")
+    try:
+        frame = pd.read_csv(BytesIO(payload))
+    except Exception as exc:  # pragma: no cover - pandas error formatting is varied
+        raise HTTPException(status_code=400, detail="invalid CSV file") from exc
+    if frame.empty:
+        raise HTTPException(status_code=400, detail="file contains no rows")
+
+    frame, dimension_columns = _normalize_upload_columns(frame)
+
+    for column in REQUIRED_UPLOAD_VALUES:
+        series = frame[column].astype("string").str.strip()
+        if series.isna().any() or (series == "").any():
+            raise HTTPException(status_code=400, detail=f"{column} is required")
+
+    frame["metric_key"] = frame["metric_key"].astype("string").str.strip().str.lower()
+    frame["metric_name"] = frame["metric_name"].astype("string").str.strip()
+    frame["metric_description"] = (
+        frame["metric_description"].astype("string").str.strip().replace("", pd.NA)
+    )
+    frame["metric_type"] = frame["metric_type"].astype("string").str.strip().str.lower()
+    frame["unit"] = frame["unit"].astype("string").str.strip().replace("", pd.NA)
+    frame["directionality"] = frame["directionality"].astype("string").str.strip().str.lower()
+    frame["directionality"] = frame["directionality"].replace("", pd.NA)
+    frame["aggregation"] = frame["aggregation"].astype("string").str.strip().str.lower()
+    frame["grain"] = frame["grain"].astype("string").str.strip().str.lower()
+
+    grains = set(frame["grain"].dropna().tolist())
+    unsupported = [grain for grain in grains if not is_supported_grain(grain)]
+    if unsupported:
+        detail = ", ".join(sorted(unsupported))
+        raise HTTPException(status_code=400, detail=f"unsupported grain(s): {detail}")
+
+    start_ts = cast(
+        "pd.Series",
+        pd.to_datetime(frame["time_start_ts"], errors="coerce", utc=True),
+    )
+    if bool(start_ts.isna().any()):
+        raise HTTPException(status_code=400, detail="invalid time_start_ts values")
+    end_raw = cast("pd.Series", frame["time_end_ts"])
+    end_ts = cast(
+        "pd.Series",
+        pd.to_datetime(end_raw, errors="coerce", utc=True),
+    )
+    invalid_end = end_raw.notna() & end_ts.isna()
+    if bool(invalid_end.any()):
+        raise HTTPException(status_code=400, detail="invalid time_end_ts values")
+    if bool(((~end_ts.isna()) & (end_ts <= start_ts)).any()):
+        raise HTTPException(status_code=400, detail="time_end_ts must be after time_start_ts")
+
+    frame["time_start_ts"] = start_ts.dt.to_pydatetime()
+    frame["time_end_ts"] = end_ts.dt.to_pydatetime()
+
+    value_num = cast(
+        "pd.Series",
+        pd.to_numeric(frame["value_num"], errors="coerce"),
+    )
+    if bool(value_num.isna().any()):
+        raise HTTPException(status_code=400, detail="invalid value_num values")
+    frame["value_num"] = value_num.astype(float)
+
+    sample_size = cast(
+        "pd.Series",
+        pd.to_numeric(frame["sample_size"], errors="coerce"),
+    )
+    invalid_sample = frame["sample_size"].notna() & sample_size.isna()
+    if bool(invalid_sample.any()):
+        raise HTTPException(status_code=400, detail="invalid sample_size values")
+    frame["sample_size"] = sample_size
+
+    frame["is_estimated"] = frame["is_estimated"].map(_normalize_boolean)
+    if bool(frame["is_estimated"].isna().any()):
+        raise HTTPException(status_code=400, detail="invalid is_estimated values")
+
+    for column in dimension_columns:
+        frame[column] = frame[column].astype("string").str.strip()
+        frame[column] = frame[column].replace("", pd.NA)
+
+    metric_rows: list[dict[str, object]] = []
+    for metric_key, group in frame.groupby("metric_key"):
+        metric_key_str = str(metric_key)
+        metric_rows.append(
+            {
+                "metric_key": metric_key_str,
+                "metric_name": _unique_field(
+                    group,
+                    "metric_name",
+                    metric_key_str,
+                    required=True,
+                ),
+                "metric_description": _unique_field(
+                    group,
+                    "metric_description",
+                    metric_key_str,
+                    required=False,
+                ),
+                "metric_type": _unique_field(
+                    group,
+                    "metric_type",
+                    metric_key_str,
+                    required=True,
+                    lower=True,
+                ),
+                "unit": _unique_field(
+                    group,
+                    "unit",
+                    metric_key_str,
+                    required=False,
+                ),
+                "directionality": _unique_field(
+                    group,
+                    "directionality",
+                    metric_key_str,
+                    required=False,
+                    lower=True,
+                ),
+                "aggregation": _unique_field(
+                    group,
+                    "aggregation",
+                    metric_key_str,
+                    required=True,
+                    lower=True,
+                ),
+            },
+        )
+
+    dimension_rows = [
+        {
+            "dimension_key": dimension_key,
+            "dimension_name": dimension_key.replace("_", " ").title(),
+        }
+        for dimension_key in dimension_columns
+    ]
+
+    session = connection.session
+    try:
+        metrics_upserted = 0
+        if metric_rows:
+            stmt = pg_insert(MetricDefinition).values(metric_rows)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=[MetricDefinition.metric_key],
+                set_={
+                    "metric_name": stmt.excluded.metric_name,
+                    "metric_description": stmt.excluded.metric_description,
+                    "metric_type": stmt.excluded.metric_type,
+                    "unit": stmt.excluded.unit,
+                    "directionality": stmt.excluded.directionality,
+                    "aggregation": stmt.excluded.aggregation,
+                },
+            )
+            result = await session.execute(stmt)
+            metrics_upserted = cast("Any", result).rowcount or 0
+
+        if dimension_rows:
+            stmt = pg_insert(DimensionDefinition).values(dimension_rows)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=[DimensionDefinition.dimension_key],
+                set_={"dimension_name": stmt.excluded.dimension_name},
+            )
+            await session.execute(stmt)
+
+        metric_keys = [row["metric_key"] for row in metric_rows]
+        metric_ids: dict[str, int] = {}
+        if metric_keys:
+            stmt = select(
+                MetricDefinition.metric_key,
+                MetricDefinition.metric_id,
+            ).where(MetricDefinition.metric_key.in_(metric_keys))
+            rows = (await session.execute(stmt)).mappings().all()
+            metric_ids = {row["metric_key"]: int(row["metric_id"]) for row in rows}
+
+        dimension_ids: dict[str, int] = {}
+        if dimension_columns:
+            stmt = select(
+                DimensionDefinition.dimension_key,
+                DimensionDefinition.dimension_id,
+            ).where(DimensionDefinition.dimension_key.in_(dimension_columns))
+            rows = (await session.execute(stmt)).mappings().all()
+            dimension_ids = {row["dimension_key"]: int(row["dimension_id"]) for row in rows}
+
+        dimension_value_rows: list[dict[str, object]] = []
+        for dimension_key in dimension_columns:
+            values = frame[dimension_key].dropna().tolist()
+            if not values:
+                continue
+            dimension_id = dimension_ids[dimension_key]
+            unique_values = list(dict.fromkeys(values))
+            dimension_value_rows.extend(
+                [
+                    {
+                        "dimension_id": dimension_id,
+                        "value": str(value),
+                    }
+                    for value in unique_values
+                ],
+            )
+
+        dimension_values_inserted = 0
+        if dimension_value_rows:
+            stmt = pg_insert(DimensionValue).values(dimension_value_rows)
+            stmt = stmt.on_conflict_do_nothing(
+                index_elements=[DimensionValue.dimension_id, DimensionValue.value],
+            )
+            result = await session.execute(stmt)
+            dimension_values_inserted = cast("Any", result).rowcount or 0
+
+        dimension_value_ids: dict[tuple[int, str], int] = {}
+        for dimension_key in dimension_columns:
+            values = frame[dimension_key].dropna().tolist()
+            if not values:
+                continue
+            dimension_id = dimension_ids[dimension_key]
+            unique_values = list(dict.fromkeys([str(value) for value in values]))
+            stmt = select(DimensionValue.value_id, DimensionValue.value).where(
+                DimensionValue.dimension_id == dimension_id,
+                DimensionValue.value.in_(unique_values),
+            )
+            rows = (await session.execute(stmt)).mappings().all()
+            for row in rows:
+                dimension_value_ids[(dimension_id, row["value"])] = int(row["value_id"])
+
+        dimension_sets: dict[str, list[tuple[int, int]]] = {}
+        row_set_hashes: list[str] = []
+        records = frame.to_dict(orient="records")
+        for record in records:
+            pairs: list[tuple[str, str, int, int]] = []
+            for dimension_key in dimension_columns:
+                value = record.get(dimension_key)
+                if value is None or pd.isna(value):
+                    continue
+                dimension_id = dimension_ids[dimension_key]
+                value_id = dimension_value_ids[(dimension_id, str(value))]
+                pairs.append((dimension_key, str(value), dimension_id, value_id))
+            pairs_sorted = sorted(pairs, key=lambda item: item[0])
+            hash_pairs = [(key, value) for key, value, _, _ in pairs_sorted]
+            set_hash = _build_set_hash(hash_pairs)
+            if set_hash not in dimension_sets:
+                dimension_sets[set_hash] = [
+                    (dimension_id, value_id) for _, _, dimension_id, value_id in pairs_sorted
+                ]
+            row_set_hashes.append(set_hash)
+
+        dimension_sets_inserted = 0
+        if dimension_sets:
+            stmt = pg_insert(DimensionSet).values(
+                [{"set_hash": set_hash} for set_hash in dimension_sets],
+            )
+            stmt = stmt.on_conflict_do_nothing(index_elements=[DimensionSet.set_hash])
+            result = await session.execute(stmt)
+            dimension_sets_inserted = cast("Any", result).rowcount or 0
+
+        set_ids: dict[str, int] = {}
+        if dimension_sets:
+            stmt = select(DimensionSet.set_hash, DimensionSet.set_id).where(
+                DimensionSet.set_hash.in_(list(dimension_sets.keys())),
+            )
+            rows = (await session.execute(stmt)).mappings().all()
+            set_ids = {row["set_hash"]: int(row["set_id"]) for row in rows}
+
+        set_value_rows: list[dict[str, object]] = []
+        for set_hash, set_pairs in dimension_sets.items():
+            set_id = set_ids[set_hash]
+            for dimension_id, value_id in set_pairs:
+                set_value_rows.append(
+                    {
+                        "set_id": set_id,
+                        "dimension_id": dimension_id,
+                        "value_id": value_id,
+                    },
+                )
+        if set_value_rows:
+            stmt = pg_insert(DimensionSetValue).values(set_value_rows)
+            stmt = stmt.on_conflict_do_nothing(
+                index_elements=[DimensionSetValue.set_id, DimensionSetValue.value_id],
+            )
+            await session.execute(stmt)
+
+        series_rows: list[dict[str, object]] = []
+        series_keys: set[tuple[int, str, int]] = set()
+        for record, set_hash in zip(records, row_set_hashes, strict=True):
+            metric_id = metric_ids[record["metric_key"]]
+            grain = normalize_grain(record["grain"])
+            set_id = set_ids[set_hash]
+            series_key = (metric_id, grain, set_id)
+            if series_key in series_keys:
+                continue
+            series_keys.add(series_key)
+            series_rows.append(
+                {
+                    "metric_id": metric_id,
+                    "grain": grain,
+                    "set_id": set_id,
+                },
+            )
+
+        metric_series_inserted = 0
+        if series_rows:
+            stmt = pg_insert(MetricSeries).values(series_rows)
+            stmt = stmt.on_conflict_do_nothing(
+                index_elements=[MetricSeries.metric_id, MetricSeries.grain, MetricSeries.set_id],
+            )
+            result = await session.execute(stmt)
+            metric_series_inserted = cast("Any", result).rowcount or 0
+
+        series_ids: dict[tuple[int, str, int], int] = {}
+        if series_keys:
+            metric_id_values = {metric_id for metric_id, _, _ in series_keys}
+            set_id_values = {set_id for _, _, set_id in series_keys}
+            grains = {grain for _, grain, _ in series_keys}
+            stmt = select(
+                MetricSeries.metric_id,
+                MetricSeries.grain,
+                MetricSeries.set_id,
+                MetricSeries.series_id,
+            ).where(
+                MetricSeries.metric_id.in_(metric_id_values),
+                MetricSeries.set_id.in_(set_id_values),
+                MetricSeries.grain.in_(grains),
+            )
+            rows = (await session.execute(stmt)).mappings().all()
+            series_ids = {
+                (int(row["metric_id"]), row["grain"], int(row["set_id"])): int(row["series_id"])
+                for row in rows
+            }
+
+        observation_rows: list[dict[str, object]] = []
+        for record, set_hash in zip(records, row_set_hashes, strict=True):
+            metric_id = metric_ids[record["metric_key"]]
+            grain = normalize_grain(record["grain"])
+            set_id = set_ids[set_hash]
+            series_id = series_ids[(metric_id, grain, set_id)]
+            sample_size_value = record.get("sample_size")
+            sample_size = (
+                int(sample_size_value)
+                if sample_size_value is not None and not pd.isna(sample_size_value)
+                else None
+            )
+            time_end = record.get("time_end_ts")
+            time_end_ts = time_end if time_end is not None and not pd.isna(time_end) else None
+            observation_rows.append(
+                {
+                    "series_id": series_id,
+                    "time_start_ts": record["time_start_ts"],
+                    "time_end_ts": time_end_ts,
+                    "value_num": float(record["value_num"]),
+                    "sample_size": sample_size,
+                    "is_estimated": bool(record["is_estimated"]),
+                },
+            )
+
+        observations_inserted = 0
+        if observation_rows:
+            stmt = pg_insert(MetricObservation).values(observation_rows)
+            result = await session.execute(stmt)
+            observations_inserted = cast("Any", result).rowcount or 0
+
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+
+    return {
+        "rows": len(frame.index),
+        "metrics_upserted": metrics_upserted,
+        "dimensions_upserted": len(dimension_rows),
+        "dimension_values_inserted": dimension_values_inserted,
+        "dimension_sets_inserted": dimension_sets_inserted,
+        "metric_series_inserted": metric_series_inserted,
+        "metric_observations_inserted": observations_inserted,
     }

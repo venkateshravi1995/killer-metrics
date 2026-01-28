@@ -10,6 +10,7 @@ import type {
   MetricDefinition,
   SeriesDefinition,
   TileConfig,
+  VizType,
 } from "../types"
 import type { DashboardResponse, DashboardSummary } from "../api"
 import {
@@ -40,9 +41,7 @@ import {
   mapMetricDefinition,
   normalizeTileConfig,
   packTiles,
-  readDashboardCache,
   seedTiles,
-  writeDashboardCache,
   type BreakpointKey,
 } from "./utils"
 
@@ -111,6 +110,11 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
   const [deleteModalOpen, setDeleteModalOpen] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget>(null)
   const [configuratorOpen, setConfiguratorOpen] = useState(false)
+  const [configuratorMode, setConfiguratorMode] = useState<"edit" | "create">(
+    "edit"
+  )
+  const [tilePickerOpen, setTilePickerOpen] = useState(false)
+  const [pendingTile, setPendingTile] = useState<TileConfig | null>(null)
   const [isCompactView, setIsCompactView] = useState(false)
 
   const dashboardApiBaseUrl = useMemo(() => normalizeDashboardBaseUrl(""), [])
@@ -130,8 +134,9 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
   const tilesRef = useRef<TileConfig[]>([])
   const draftInFlightRef = useRef(0)
   const metadataRef = useRef({ name: dashboardName, description: dashboardDescription })
-  const cacheHydratedRef = useRef(false)
   const initialDataRef = useRef(initialData)
+  const layoutDebounceRef = useRef<number | null>(null)
+  const pendingLayoutTilesRef = useRef<TileConfig[] | null>(null)
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -172,15 +177,20 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
   }, [tiles])
 
   useEffect(() => {
+    return () => {
+      if (layoutDebounceRef.current !== null) {
+        clearTimeout(layoutDebounceRef.current)
+      }
+    }
+  }, [])
+
+  useEffect(() => {
     if (!editMode) {
       setConfiguratorOpen(false)
     }
   }, [editMode])
 
   const resolveLayoutCols = useCallback((breakpoint: BreakpointKey) => {
-    if (breakpoint === "xs" || breakpoint === "xxs") {
-      return gridCols.lg
-    }
     return gridCols[breakpoint] ?? gridCols.lg
   }, [])
 
@@ -247,6 +257,28 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
       }
     },
     []
+  )
+
+  const scheduleLayoutPersist = useCallback(
+    (dashboardId: string, nextTiles: TileConfig[]) => {
+      pendingLayoutTilesRef.current = nextTiles
+      if (layoutDebounceRef.current !== null) {
+        clearTimeout(layoutDebounceRef.current)
+      }
+      layoutDebounceRef.current = window.setTimeout(() => {
+        const pending = pendingLayoutTilesRef.current
+        if (!pending) {
+          return
+        }
+        void persistDraftChange(dashboardId, async () => {
+          await updateDraftLayout(dashboardApiBaseUrl, dashboardId, {
+            items: pending.map((tile) => ({ id: tile.id, layout: tile.layout })),
+          })
+        })
+        pendingLayoutTilesRef.current = null
+      }, 350)
+    },
+    [dashboardApiBaseUrl, persistDraftChange]
   )
 
   const loadDashboard = useCallback(
@@ -338,38 +370,6 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
   }, [performRefresh, refreshIntervalMs])
 
   useEffect(() => {
-    if (cacheHydratedRef.current) {
-      return
-    }
-    const cached = readDashboardCache()
-    if (cached) {
-      if (cached.dashboards?.length) {
-        setDashboards(cached.dashboards)
-      }
-      if (cached.activeDashboardId) {
-        setActiveDashboardId(cached.activeDashboardId)
-        activeDashboardIdRef.current = cached.activeDashboardId
-      }
-      if (cached.current) {
-        applyDashboardMetadata(cached.current.name, cached.current.description)
-        setHasDraft(Boolean(cached.current.hasDraft))
-        setEditMode(true)
-        const normalizedTiles = cached.current.tiles.map((tile) =>
-          normalizeTileConfig(tile)
-        )
-        applyDashboardTiles(normalizedTiles)
-        const cachedSelected = cached.current.selectedTileId
-        const resolvedSelected =
-          cachedSelected && normalizedTiles.some((tile) => tile.id === cachedSelected)
-            ? cachedSelected
-            : normalizedTiles[0]?.id ?? null
-        setSelectedTileId(resolvedSelected)
-      }
-      cacheHydratedRef.current = true
-      refreshDashboards()
-      return
-    }
-
     const initial = initialDataRef.current
     if (initial?.dashboards?.length || initial?.activeDashboard) {
       if (initial.dashboards?.length) {
@@ -391,11 +391,9 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
         setSelectedTileId(normalizedTiles[0]?.id ?? null)
         setSeriesByTileId({})
       }
-      cacheHydratedRef.current = true
       return
     }
 
-    cacheHydratedRef.current = true
     refreshDashboards()
   }, [applyDashboardMetadata, applyDashboardTiles, refreshDashboards])
 
@@ -531,42 +529,6 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
     setSelectedTileId(tiles[0]?.id ?? null)
   }, [tiles, selectedTileId])
 
-  useEffect(() => {
-    if (!cacheHydratedRef.current) {
-      return
-    }
-    const timeout = setTimeout(() => {
-      const current = activeDashboardId
-        ? {
-            id: activeDashboardId,
-            name: dashboardName,
-            description: dashboardDescription,
-            tiles,
-            selectedTileId,
-            editMode,
-            hasDraft,
-          }
-        : null
-      writeDashboardCache({
-        version: 1,
-        updatedAt: new Date().toISOString(),
-        activeDashboardId,
-        dashboards,
-        current,
-      })
-    }, 300)
-    return () => clearTimeout(timeout)
-  }, [
-    activeDashboardId,
-    dashboards,
-    dashboardName,
-    dashboardDescription,
-    tiles,
-    selectedTileId,
-    editMode,
-    hasDraft,
-  ])
-
   const selectedTile = tiles.find((tile) => tile.id === selectedTileId) ?? null
   const selectedSeries = selectedTile
     ? seriesByTileId[selectedTile.id] ?? []
@@ -574,6 +536,39 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
   const isLayoutEditable = editMode && !isCompactView
   const layouts = useMemo(() => buildLayouts(tiles), [tiles])
   const dashboardConfig = useMemo<DashboardConfig>(() => ({ tiles }), [tiles])
+
+  const openTilePicker = () => {
+    if (!metrics.length) {
+      return
+    }
+    setDashboardError(null)
+    setTilePickerOpen(true)
+  }
+
+  const closeTilePicker = () => {
+    setTilePickerOpen(false)
+  }
+
+  const startTileDraft = (vizType: VizType) => {
+    if (!metrics.length) {
+      return
+    }
+    const definition = getTileDefinition(vizType)
+    const seeded = createTileConfig(
+      metrics[0],
+      { x: 0, y: Infinity, w: 6, h: 5 },
+      createId("tile")
+    )
+    const draft: TileConfig = {
+      ...seeded,
+      vizType,
+      dataSource: definition.data.source,
+    }
+    setPendingTile(draft)
+    setConfiguratorMode("create")
+    setConfiguratorOpen(true)
+    setTilePickerOpen(false)
+  }
 
   const addTile = () => {
     if (!metrics.length) {
@@ -595,10 +590,29 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
         nextTiles.find((tile) => tile.id === sized.id) ?? sized
       void persistDraftChange(dashboardId, async () => {
         await createDraftTile(dashboardApiBaseUrl, dashboardId, createdTile)
-        await updateDraftLayout(dashboardApiBaseUrl, dashboardId, {
-          items: nextTiles.map((tile) => ({ id: tile.id, layout: tile.layout })),
-        })
       })
+      scheduleLayoutPersist(dashboardId, nextTiles)
+    }
+  }
+
+  const addTileFromDraft = (tile: TileConfig) => {
+    const cols = resolveLayoutCols(activeBreakpoint)
+    const seeded = {
+      ...tile,
+      layout: { ...tile.layout, y: Infinity },
+    }
+    const sized = applyMinSize(seeded, cols)
+    const nextTiles = packTiles([...tilesRef.current, sized], cols)
+    setTiles(nextTiles)
+    setSelectedTileId(sized.id)
+    const dashboardId = activeDashboardIdRef.current
+    if (dashboardId) {
+      const createdTile =
+        nextTiles.find((entry) => entry.id === sized.id) ?? sized
+      void persistDraftChange(dashboardId, async () => {
+        await createDraftTile(dashboardApiBaseUrl, dashboardId, createdTile)
+      })
+      scheduleLayoutPersist(dashboardId, nextTiles)
     }
   }
 
@@ -624,10 +638,8 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
         nextTiles.find((tile) => tile.id === sized.id) ?? sized
       void persistDraftChange(dashboardId, async () => {
         await createDraftTile(dashboardApiBaseUrl, dashboardId, createdTile)
-        await updateDraftLayout(dashboardApiBaseUrl, dashboardId, {
-          items: nextTiles.map((tile) => ({ id: tile.id, layout: tile.layout })),
-        })
       })
+      scheduleLayoutPersist(dashboardId, nextTiles)
     }
   }
 
@@ -654,10 +666,8 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
     if (dashboardId) {
       void persistDraftChange(dashboardId, async () => {
         await deleteDraftTile(dashboardApiBaseUrl, dashboardId, tileId)
-        await updateDraftLayout(dashboardApiBaseUrl, dashboardId, {
-          items: nextTiles.map((tile) => ({ id: tile.id, layout: tile.layout })),
-        })
       })
+      scheduleLayoutPersist(dashboardId, nextTiles)
     }
   }
 
@@ -715,11 +725,7 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
     setTiles(nextTiles)
     const dashboardId = activeDashboardIdRef.current
     if (dashboardId) {
-      void persistDraftChange(dashboardId, async () => {
-        await updateDraftLayout(dashboardApiBaseUrl, dashboardId, {
-          items: nextTiles.map((tile) => ({ id: tile.id, layout: tile.layout })),
-        })
-      })
+      scheduleLayoutPersist(dashboardId, nextTiles)
     }
   }
 
@@ -747,12 +753,35 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
 
   const closeConfigurator = () => {
     setConfiguratorOpen(false)
+    if (configuratorMode === "create") {
+      setPendingTile(null)
+      setConfiguratorMode("edit")
+    }
   }
 
   const handleConfigureTile = (tileId: string) => {
     setDashboardError(null)
+    setConfiguratorMode("edit")
+    setPendingTile(null)
     setSelectedTileId(tileId)
     setConfiguratorOpen(true)
+  }
+
+  const commitConfiguratorTile = (tileId: string, updates: Partial<TileConfig>) => {
+    if (configuratorMode === "create") {
+      addTileFromDraft(updates as TileConfig)
+      setPendingTile(null)
+      setConfiguratorMode("edit")
+      return
+    }
+    updateTile(tileId, updates)
+  }
+
+  const handleBackToTilePicker = () => {
+    setConfiguratorOpen(false)
+    setPendingTile(null)
+    setConfiguratorMode("edit")
+    setTilePickerOpen(true)
   }
 
   const openDeleteModal = () => {
@@ -925,6 +954,9 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
     deleteModalOpen,
     deleteTarget,
     configuratorOpen,
+    configuratorMode,
+    tilePickerOpen,
+    pendingTile,
     isCompactView,
     metricsByKey,
     dimensionsByKey,
@@ -945,9 +977,13 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
     setConfiguratorOpen,
     setRefreshIntervalMs,
     addTile,
+    openTilePicker,
+    closeTilePicker,
+    startTileDraft,
     duplicateTile,
     removeTile,
     updateTile,
+    commitConfiguratorTile,
     commitLayout,
     handleDashboardSelect,
     handleRefreshDashboard,
@@ -961,6 +997,7 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
     toggleEditMode,
     handleConfigureTile,
     closeConfigurator,
+    handleBackToTilePicker,
     handleSeriesChange,
   }
 }

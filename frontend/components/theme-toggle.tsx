@@ -5,21 +5,10 @@ import { Monitor, Moon, Sun } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 
-const storageKey = "kms-theme"
-
 type Theme = "light" | "dark"
 type ThemeSetting = Theme | "auto"
 
 const getPreferredTheme = (): ThemeSetting => {
-  if (typeof window === "undefined") {
-    return "auto"
-  }
-
-  const stored = window.localStorage.getItem(storageKey)
-  if (stored === "light" || stored === "dark" || stored === "auto") {
-    return stored as ThemeSetting
-  }
-
   return "auto"
 }
 
@@ -40,13 +29,6 @@ export function ThemeToggle() {
     const initial = getPreferredTheme()
     setSetting(initial)
   }, [])
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return
-    }
-    window.localStorage.setItem(storageKey, setting)
-  }, [setting])
 
   useEffect(() => {
     if (typeof window === "undefined") {

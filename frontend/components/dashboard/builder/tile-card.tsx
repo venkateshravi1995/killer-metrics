@@ -66,10 +66,6 @@ export function TileCard({
   const summary = tileData.summary
   const accentColor = getPalette(tile.palette).colors[0]
   const metric = tileData.primaryMetric
-  const metricLabel =
-    tile.metricKeys.length > 1
-      ? `${metric.label} +${tile.metricKeys.length - 1}`
-      : metric.label
   const groupByLabels = tile.groupBy.map(
     (key) => dimensionsByKey.get(key)?.label ?? key
   )
@@ -95,6 +91,15 @@ export function TileCard({
       values: Array.from(values),
     }))
   }, [dimensionsByKey, tile.filters])
+  const updatedLabel = useMemo(() => {
+    if (!tileState.lastUpdated) {
+      return null
+    }
+    return new Intl.DateTimeFormat("en-US", {
+      hour: "numeric",
+      minute: "2-digit",
+    }).format(new Date(tileState.lastUpdated))
+  }, [tileState.lastUpdated])
   const isLoading = tileState.status === "loading"
   const isError = tileState.status === "error"
   const TileRenderer = tileDefinition.render
@@ -131,7 +136,11 @@ export function TileCard({
             <div className="font-display text-sm font-semibold text-foreground">
               {tile.title}
             </div>
-            <div className="text-xs text-muted-foreground">{metricLabel}</div>
+            {tile.description ? (
+              <div className="text-xs text-muted-foreground">
+                {tile.description}
+              </div>
+            ) : null}
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -219,7 +228,7 @@ export function TileCard({
         )}
       </div>
       <div className="flex items-center justify-between text-xs text-muted-foreground">
-        <span>{metric.description ?? ""}</span>
+        <span>{updatedLabel ? `Updated ${updatedLabel}` : ""}</span>
         <span className="font-medium text-foreground">
           {isLoading || isError || !summary
             ? "--"

@@ -2,7 +2,8 @@
 
 import type { CSSProperties } from "react"
 import { memo, useCallback, useEffect, useRef, useState } from "react"
-import { AuthView } from "@neondatabase/neon-js/auth/react/ui"
+import { AuthView } from "@neondatabase/auth/react"
+import Link from "next/link"
 import { useParams } from "next/navigation"
 
 import { NeonAuthProvider } from "@/components/auth/neon-auth-provider"
@@ -480,14 +481,19 @@ export default function AuthPage() {
       <div className={styles.shell}>
         <div className={styles.topbar}>
           <span className={styles.topbarTitle}>Venky&apos;s Killer Metrics</span>
-          <a
-            className={styles.topbarLink}
-            href="https://www.linkedin.com/in/veravi/"
-            target="_blank"
-            rel="noreferrer"
-          >
-            About me
-          </a>
+          <div className="flex items-center gap-4">
+            <Link className={styles.topbarLink} href="/">
+              Back to dashboard
+            </Link>
+            <a
+              className={styles.topbarLink}
+              href="https://www.linkedin.com/in/veravi/"
+              target="_blank"
+              rel="noreferrer"
+            >
+              About me
+            </a>
+          </div>
         </div>
         {mounted ? (
           <div className={styles.backdrop} aria-hidden="true">

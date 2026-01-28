@@ -1,5 +1,5 @@
 @import "tailwindcss";
-@import "@neondatabase/neon-js/ui/tailwind";
+@import "@neondatabase/auth/ui/tailwind";
 @import "react-grid-layout/css/styles.css";
 @import "react-resizable/css/styles.css";
 @import "tw-animate-css";

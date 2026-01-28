@@ -1,4 +1,4 @@
-import { neonAuthMiddleware } from "@neondatabase/neon-js/auth/next/server"
+import { neonAuthMiddleware } from "@neondatabase/auth/next/server"
 
 export const proxy = neonAuthMiddleware({ loginUrl: "/auth/sign-in" })
 

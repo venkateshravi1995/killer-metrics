@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react"
 
-import type { AvailabilityResponse } from "../api"
+import type { AvailabilityResponse, DimensionValueItem } from "../api"
 import { fetchAvailability, fetchDimensionValues } from "../api"
 import { DefaultTileConfigurator } from "../tiles/configurator/default"
 import { getTileDefinition, getTileDefinitions } from "../tiles/registry"
@@ -36,6 +36,10 @@ export function ConfiguratorPanel({
   const dataSource = tile.dataSource ?? tileDefinition.data.source
   const tileDefinitions = getTileDefinitions()
   const [activeTab, setActiveTab] = useState<"data" | "visuals">("data")
+  const dimensionsByKey = useMemo(
+    () => new Map(dimensions.map((dimension) => [dimension.key, dimension])),
+    [dimensions]
+  )
   const [availabilityState, setAvailabilityState] = useState<{
     key: string
     data: AvailabilityResponse | null
@@ -45,7 +49,11 @@ export function ConfiguratorPanel({
   const filtersKey = useMemo(
     () =>
       tile.filters
-        .map((filter) => `${filter.dimension}:${filter.values.join(",")}`)
+        .filter((filter) => filter.dimensionId && (filter.valueIds ?? []).length)
+        .map(
+          (filter) =>
+            `${filter.dimensionId}:${(filter.valueIds ?? []).join(",")}`
+        )
         .join("|"),
     [tile.filters]
   )
@@ -69,7 +77,7 @@ export function ConfiguratorPanel({
     [tile.apiBaseUrl, primaryMetricKey, tile.startTime, tile.endTime]
   )
   const [dimensionValuesByContext, setDimensionValuesByContext] = useState<
-    Record<string, Record<string, string[]>>
+    Record<string, Record<string, DimensionValueItem[]>>
   >({})
   const [dimensionValuesStatusByContext, setDimensionValuesStatusByContext] = useState<
     Record<string, Record<string, "loading" | "ready" | "error">>
@@ -77,7 +85,10 @@ export function ConfiguratorPanel({
   const valuesContextRef = useRef(valuesContextKey)
   const isMountedRef = useRef(true)
   const inFlightKeysRef = useRef(new Map<string, Set<string>>())
-  const emptyValues = useMemo(() => ({} as Record<string, string[]>), [])
+  const emptyValues = useMemo(
+    () => ({} as Record<string, DimensionValueItem[]>),
+    []
+  )
   const emptyStatus = useMemo(
     () => ({} as Record<string, "loading" | "ready" | "error">),
     []
@@ -278,13 +289,33 @@ export function ConfiguratorPanel({
       return
     }
     const nextFilters = tile.filters.map((filter) => {
+      const dimension = filter.dimension
+      const dimensionId =
+        filter.dimensionId || dimensionsByKey.get(dimension)?.id || 0
+      const values = dimensionValues[dimension] ?? []
+      if (!values.length) {
+        return { ...filter, dimensionId }
+      }
+      const valueByLabel = new Map(values.map((item) => [item.value, item.id]))
+      const resolvedIds = filter.values
+        .map((value) => valueByLabel.get(value))
+        .filter((valueId): valueId is number => typeof valueId === "number")
       if (!filter.values.length) {
-        const values = dimensionValues[filter.dimension]
-        if (values && values.length > 0) {
-          return { ...filter, values: [values[0]] }
+        const first = values[0]
+        return {
+          ...filter,
+          dimensionId,
+          values: first ? [first.value] : [],
+          valueIds: first ? [first.id] : [],
         }
       }
-      return filter
+      if (
+        resolvedIds.length &&
+        resolvedIds.join("|") !== (filter.valueIds ?? []).join("|")
+      ) {
+        return { ...filter, dimensionId, valueIds: resolvedIds }
+      }
+      return { ...filter, dimensionId }
     })
     const changed = nextFilters.some(
       (filter, index) =>
@@ -319,13 +350,17 @@ export function ConfiguratorPanel({
       return
     }
     const nextValues = dimensionValues[nextDimension] ?? []
+    const nextDimensionId = dimensionsByKey.get(nextDimension)?.id ?? 0
+    const firstValue = nextValues[0]
     onUpdate(tile.id, {
       filters: [
         ...tile.filters,
         {
           id: createId("filter"),
           dimension: nextDimension,
-          values: nextValues.length ? [nextValues[0]] : [],
+          dimensionId: nextDimensionId,
+          values: firstValue ? [firstValue.value] : [],
+          valueIds: firstValue ? [firstValue.id] : [],
         },
       ],
     })

@@ -7,10 +7,10 @@ from pydantic import BaseModel, Field
 
 
 class DimensionFilter(BaseModel):
-    """Filter definition for dimension key/value matching."""
+    """Filter definition for dimension ID/value ID matching."""
 
-    dimension_key: str
-    values: list[str] = Field(default_factory=list)
+    dimension_id: int
+    value_ids: list[int] = Field(default_factory=list)
 
 
 class AggregateQuery(BaseModel):

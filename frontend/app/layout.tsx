@@ -2,6 +2,7 @@ import type { Metadata } from "next"
 import { IBM_Plex_Mono, IBM_Plex_Sans, Space_Grotesk } from "next/font/google"
 import { Analytics } from "@vercel/analytics/next"
 import "./globals.css"
+import { AppFrame } from "@/components/app-frame"
 
 const spaceGrotesk = Space_Grotesk({
   variable: "--font-display",
@@ -35,7 +36,7 @@ export default function RootLayout({
       <body
         className={`${spaceGrotesk.variable} ${plexSans.variable} ${plexMono.variable} antialiased`}
       >
-        {children}
+        <AppFrame>{children}</AppFrame>
         <Analytics />
       </body>
     </html>

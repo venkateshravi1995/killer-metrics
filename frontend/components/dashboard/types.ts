@@ -24,7 +24,9 @@ export type Grain =
 export type Filter = {
   id: string
   dimension: DimensionKey
+  dimensionId: number
   values: string[]
+  valueIds: number[]
 }
 
 export type TileLayout = {
@@ -91,6 +93,7 @@ export type MetricDefinition = {
 }
 
 export type DimensionDefinition = {
+  id: number
   key: DimensionKey
   label: string
   description?: string | null

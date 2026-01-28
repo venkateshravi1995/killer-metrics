@@ -70,7 +70,7 @@ class Dashboard(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "((is_draft = true AND user_id <> '') OR (is_draft = false AND user_id = ''))",
+            "(user_id <> '')",
             name="ck_dashboards_draft_user",
         ),
         Index(
