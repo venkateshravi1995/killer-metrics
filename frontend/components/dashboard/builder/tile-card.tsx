@@ -30,6 +30,7 @@ import type {
   SeriesDefinition,
   TileConfig,
 } from "../types"
+import type { TileDefinition } from "../tiles/types"
 import { useTileData } from "../use-tile-data"
 import { getTileDefinition } from "../tiles/registry"
 
@@ -60,7 +61,7 @@ export function TileCard({
   metricsByKey,
   dimensionsByKey,
 }: TileCardProps) {
-  const tileDefinition = getTileDefinition(tile.vizType)
+  const tileDefinition = getTileDefinition(tile.vizType) as TileDefinition<TileConfig>
   const tileState = useTileData(tile, metricsByKey)
   const tileData = tileState.data
   const summary = tileData.summary
@@ -102,7 +103,7 @@ export function TileCard({
   }, [tileState.lastUpdated])
   const isLoading = tileState.status === "loading"
   const isError = tileState.status === "error"
-  const TileRenderer = tileDefinition.render
+  const TileRenderer = tileDefinition.render as TileDefinition<TileConfig>["render"]
 
   useEffect(() => {
     onSeriesChange(tile.id, tileData.series)

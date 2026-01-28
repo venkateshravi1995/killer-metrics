@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import type { AvailabilityResponse, DimensionValueItem } from "../api"
 import { fetchAvailability, fetchDimensionValues } from "../api"
 import { DefaultTileConfigurator } from "../tiles/configurator/default"
+import type { TileConfiguratorComponent, TileDefinition } from "../tiles/types"
 import { getTileDefinition, getTileDefinitions } from "../tiles/registry"
 import type {
   DimensionDefinition,
@@ -31,7 +32,7 @@ export function ConfiguratorPanel({
   dimensions,
   series,
 }: ConfiguratorPanelProps) {
-  const tileDefinition = getTileDefinition(tile.vizType)
+  const tileDefinition = getTileDefinition(tile.vizType) as TileDefinition<TileConfig>
   const primaryMetricKey = tile.metricKeys[0] ?? ""
   const dataSource = tile.dataSource ?? tileDefinition.data.source
   const tileDefinitions = getTileDefinitions()
@@ -428,7 +429,8 @@ export function ConfiguratorPanel({
     onUpdate(tile.id, { visuals: { seriesColors: {} } as TileConfig["visuals"] })
   }
 
-  const ConfiguratorComponent = tileDefinition.configurator ?? DefaultTileConfigurator
+  const ConfiguratorComponent = (tileDefinition.configurator ??
+    DefaultTileConfigurator) as TileConfiguratorComponent<TileConfig>
 
   return (
     <ConfiguratorComponent

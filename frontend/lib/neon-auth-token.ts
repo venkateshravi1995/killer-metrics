@@ -15,8 +15,9 @@ export async function getNeonAuthToken() {
         return token
       }
     }
-    if (typeof authServer.getJWTToken === "function") {
-      const jwt = await authServer.getJWTToken()
+    const authServerAny = authServer as { getJWTToken?: () => Promise<string | null> }
+    if (typeof authServerAny.getJWTToken === "function") {
+      const jwt = await authServerAny.getJWTToken()
       if (jwt && isLikelyJwt(jwt)) {
         return jwt
       }
@@ -35,8 +36,9 @@ export async function getNeonAuthToken() {
       return token
     }
   }
-  if (typeof neonAuthClient.getJWTToken === "function") {
-    const jwt = await neonAuthClient.getJWTToken()
+  const neonAuthAny = neonAuthClient as { getJWTToken?: () => Promise<string | null> }
+  if (typeof neonAuthAny.getJWTToken === "function") {
+    const jwt = await neonAuthAny.getJWTToken()
     if (jwt && isLikelyJwt(jwt)) {
       return jwt
     }

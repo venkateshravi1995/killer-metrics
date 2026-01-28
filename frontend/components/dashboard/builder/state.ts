@@ -677,7 +677,7 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
         ? { ...source.visuals, ...updates.visuals }
         : source.visuals
     const nextTile = applyMinSize(
-      { ...source, ...updates, visuals: nextVisuals },
+      { ...source, ...updates, visuals: nextVisuals } as TileConfig,
       cols
     )
     setTiles((prev) =>

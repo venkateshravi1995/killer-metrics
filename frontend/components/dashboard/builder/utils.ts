@@ -7,6 +7,7 @@ import type {
   VizType,
 } from "../types"
 import { getTileDefinition } from "../tiles/registry"
+import type { TileDefinition } from "../tiles/types"
 import type { DimensionCatalogItem, MetricCatalogItem } from "../api"
 
 export const gridBreakpoints = { lg: 1200, md: 996, sm: 768, xs: 560, xxs: 0 }
@@ -40,7 +41,7 @@ function cloneVisuals<TVisuals extends Record<string, unknown>>(visuals: TVisual
 }
 
 export function getTileMinSize(tile: TileConfig) {
-  const definition = getTileDefinition(tile.vizType)
+  const definition = getTileDefinition(tile.vizType) as TileDefinition<TileConfig>
   if (definition.getMinSize) {
     return definition.getMinSize(tile)
   }

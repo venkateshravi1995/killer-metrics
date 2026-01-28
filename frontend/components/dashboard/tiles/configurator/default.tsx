@@ -35,7 +35,7 @@ import { DateTimePicker } from "@/components/ui/date-time-picker"
 
 import { getPalette } from "../../data"
 import type { DimensionKey, MetricKey, TileConfig, VizType } from "../../types"
-import type { TileConfiguratorProps } from "../types"
+import type { TileConfiguratorProps, TileDefinition } from "../types"
 
 const GRAIN_OPTIONS = [
   { value: "30m", label: "30 min" },
@@ -109,8 +109,11 @@ export function DefaultTileConfigurator<TConfig extends TileConfig = TileConfig>
     unknown
   >
   const updateVisuals = (updates: Record<string, unknown>) =>
-    onUpdate(tile.id, { visuals: updates as TConfig["visuals"] })
-  const mergeVisualsForDefinition = (definition: typeof tileDefinition) => {
+    onUpdate(
+      tile.id,
+      { visuals: updates as TConfig["visuals"] } as Partial<TConfig>
+    )
+  const mergeVisualsForDefinition = (definition: TileDefinition<TileConfig>) => {
     const defaults = definition.visualDefaults as Record<string, unknown>
     const merged: Record<string, unknown> = { ...defaults }
     Object.keys(defaults).forEach((key) => {
@@ -449,17 +452,22 @@ export function DefaultTileConfigurator<TConfig extends TileConfig = TileConfig>
                       (!comparisonAllowed ||
                         nextMetricKeys.length > 1 ||
                         nextGroupBy.length > 0)
-                    const nextVisuals = mergeVisualsForDefinition(nextDefinition)
+                    const nextVisuals = mergeVisualsForDefinition(
+                      nextDefinition as TileDefinition<TileConfig>
+                    )
                     if (disableComparison && "showComparison" in nextVisuals) {
                       nextVisuals.showComparison = false
                     }
-                    onUpdate(tile.id, {
-                      vizType: nextType,
-                      dataSource: nextDataSource,
-                      metricKeys: nextMetricKeys,
-                      groupBy: nextGroupBy,
-                      visuals: nextVisuals as TileConfig["visuals"],
-                    })
+                    onUpdate(
+                      tile.id,
+                      {
+                        vizType: nextType,
+                        dataSource: nextDataSource,
+                        metricKeys: nextMetricKeys,
+                        groupBy: nextGroupBy,
+                        visuals: nextVisuals as TileConfig["visuals"],
+                      } as Partial<TConfig>
+                    )
                   })()
                 }
               >
@@ -498,11 +506,16 @@ export function DefaultTileConfigurator<TConfig extends TileConfig = TileConfig>
                       const nextVisuals = disableComparison
                         ? ({ showComparison: false } as Record<string, unknown>)
                         : null
-                      onUpdate(tile.id, {
-                        dataSource: nextSource,
-                        groupBy: nextGroupBy,
-                        ...(nextVisuals ? { visuals: nextVisuals as TileConfig["visuals"] } : {}),
-                      })
+                      onUpdate(
+                        tile.id,
+                        {
+                          dataSource: nextSource,
+                          groupBy: nextGroupBy,
+                          ...(nextVisuals
+                            ? { visuals: nextVisuals as TileConfig["visuals"] }
+                            : {}),
+                        } as Partial<TConfig>
+                      )
                     })()
                   }
                 >
@@ -532,7 +545,12 @@ export function DefaultTileConfigurator<TConfig extends TileConfig = TileConfig>
               <Label>Title</Label>
               <Input
                 value={tile.title}
-                onChange={(event) => onUpdate(tile.id, { title: event.target.value })}
+                onChange={(event) =>
+                  onUpdate(
+                    tile.id,
+                    { title: event.target.value } as Partial<TConfig>
+                  )
+                }
               />
             </div>
             <div className="space-y-2">
@@ -541,7 +559,10 @@ export function DefaultTileConfigurator<TConfig extends TileConfig = TileConfig>
                 rows={3}
                 value={tile.description}
                 onChange={(event) =>
-                  onUpdate(tile.id, { description: event.target.value })
+                  onUpdate(
+                    tile.id,
+                    { description: event.target.value } as Partial<TConfig>
+                  )
                 }
               />
             </div>
@@ -560,7 +581,10 @@ export function DefaultTileConfigurator<TConfig extends TileConfig = TileConfig>
                 <Select
                   value={tile.metricKeys[0] ?? ""}
                   onValueChange={(value) =>
-                    onUpdate(tile.id, { metricKeys: [value as MetricKey] })
+                    onUpdate(
+                      tile.id,
+                      { metricKeys: [value as MetricKey] } as Partial<TConfig>
+                    )
                   }
                 >
                   <SelectTrigger>
@@ -617,9 +641,12 @@ export function DefaultTileConfigurator<TConfig extends TileConfig = TileConfig>
                   <Select
                     value={tile.groupBy[0] ?? ""}
                     onValueChange={(value) =>
-                      onUpdate(tile.id, {
-                        groupBy: value ? [value as DimensionKey] : [],
-                      })
+                      onUpdate(
+                        tile.id,
+                        {
+                          groupBy: value ? [value as DimensionKey] : [],
+                        } as Partial<TConfig>
+                      )
                     }
                   >
                     <SelectTrigger>
@@ -687,7 +714,10 @@ export function DefaultTileConfigurator<TConfig extends TileConfig = TileConfig>
                 <Select
                   value={tile.grain}
                   onValueChange={(value) =>
-                    onUpdate(tile.id, { grain: value as TileConfig["grain"] })
+                    onUpdate(
+                      tile.id,
+                      { grain: value as TileConfig["grain"] } as Partial<TConfig>
+                    )
                   }
                 >
                   <SelectTrigger>
@@ -711,10 +741,13 @@ export function DefaultTileConfigurator<TConfig extends TileConfig = TileConfig>
                     size="xs"
                     variant="secondary"
                     onClick={() =>
-                      onUpdate(tile.id, {
-                        startTime: minAvailable?.toISOString() ?? "",
-                        endTime: maxAvailable?.toISOString() ?? "",
-                      })
+                      onUpdate(
+                        tile.id,
+                        {
+                          startTime: minAvailable?.toISOString() ?? "",
+                          endTime: maxAvailable?.toISOString() ?? "",
+                        } as Partial<TConfig>
+                      )
                     }
                   >
                     Use full range
@@ -729,9 +762,10 @@ export function DefaultTileConfigurator<TConfig extends TileConfig = TileConfig>
                 <DateTimePicker
                   value={parseIsoDate(tile.startTime)}
                   onChange={(date) =>
-                    onUpdate(tile.id, {
-                      startTime: date ? date.toISOString() : "",
-                    })
+                    onUpdate(
+                      tile.id,
+                      { startTime: date ? date.toISOString() : "" } as Partial<TConfig>
+                    )
                   }
                   minDate={minAvailable}
                   maxDate={maxAvailable}
@@ -744,7 +778,10 @@ export function DefaultTileConfigurator<TConfig extends TileConfig = TileConfig>
                 <DateTimePicker
                   value={parseIsoDate(tile.endTime)}
                   onChange={(date) =>
-                    onUpdate(tile.id, { endTime: date ? date.toISOString() : "" })
+                    onUpdate(
+                      tile.id,
+                      { endTime: date ? date.toISOString() : "" } as Partial<TConfig>
+                    )
                   }
                   minDate={minAvailable}
                   maxDate={maxAvailable}
