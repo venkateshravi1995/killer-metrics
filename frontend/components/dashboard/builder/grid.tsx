@@ -1,10 +1,9 @@
 "use client"
 
-import type { ComponentType } from "react"
-import dynamic from "next/dynamic"
-import type {
-  Layout,
-  ResponsiveProps,
+import type { Layout, ResponsiveProps } from "react-grid-layout"
+import {
+  Responsive as ResponsiveGridLayout,
+  useContainerWidth,
 } from "react-grid-layout"
 import { cn } from "@/lib/utils"
 
@@ -18,19 +17,6 @@ import type {
 } from "../types"
 import { TileCard } from "./tile-card"
 import { gridBreakpoints, gridCols, type BreakpointKey } from "./utils"
-
-type ResponsiveGridLayoutProps = Omit<
-  ResponsiveProps,
-  "width"
->
-
-const ResponsiveGridLayout = dynamic(
-  async () => {
-    const mod = await import("react-grid-layout")
-    return mod.WidthProvider(mod.Responsive)
-  },
-  { ssr: false }
-) as ComponentType<ResponsiveGridLayoutProps>
 
 type GridLayouts = ResponsiveProps["layouts"]
 
@@ -72,10 +58,18 @@ export function DashboardGrid({
   onBreakpointChange,
 }: DashboardGridProps) {
   const isLayoutEditable = editMode && !isCompactView
+  const { width, containerRef } = useContainerWidth()
+  const dragConfig = isLayoutEditable
+    ? { enabled: true, handle: ".tile-drag-handle" }
+    : { enabled: false }
+  const resizeConfig = isLayoutEditable
+    ? { enabled: true, handles: ["se"] as const }
+    : { enabled: false }
 
   return (
     <main
       data-edit-mode={editMode}
+      ref={containerRef}
       className={cn(
         "dashboard-grid canvas-grid flex-1 min-h-[640px] px-6 pb-12 pt-4",
         editMode ? "bg-transparent" : "bg-card/30"
@@ -84,17 +78,15 @@ export function DashboardGrid({
       {tiles.length ? (
         <ResponsiveGridLayout
           className="layout"
+          width={width}
           layouts={layouts}
           breakpoints={gridBreakpoints}
           cols={gridCols}
           rowHeight={36}
           margin={[16, 16]}
           containerPadding={[8, 8]}
-          draggableHandle={isLayoutEditable ? ".tile-drag-handle" : undefined}
-          isDraggable={isLayoutEditable}
-          isResizable={isLayoutEditable}
-          resizeHandles={isLayoutEditable ? ["se"] : []}
-          compactType="vertical"
+          dragConfig={dragConfig}
+          resizeConfig={resizeConfig}
           onBreakpointChange={(breakpoint) =>
             onBreakpointChange(breakpoint as BreakpointKey)
           }

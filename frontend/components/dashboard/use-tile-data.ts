@@ -225,7 +225,23 @@ function getCacheLastUpdated<T>(cache: Map<string, CacheEntry<T>>, key: string) 
 }
 
 function isAbortError(error: unknown) {
-  return error instanceof DOMException && error.name === "AbortError"
+  if (!error) {
+    return false
+  }
+  if (error instanceof DOMException && error.name === "AbortError") {
+    return true
+  }
+  if (error instanceof Error && error.name === "AbortError") {
+    return true
+  }
+  if (typeof error === "object" && "name" in error) {
+    return (error as { name?: string }).name === "AbortError"
+  }
+  if (typeof error === "object" && "message" in error) {
+    const message = String((error as { message?: unknown }).message ?? "")
+    return message.includes("aborted")
+  }
+  return false
 }
 
 async function resolveTimeRange(
@@ -929,7 +945,13 @@ export function useTileData(
     load()
     return () => {
       isActive = false
-      controller.abort()
+      if (!signal.aborted) {
+        try {
+          controller.abort()
+        } catch {
+          // Some runtimes throw on abort; ignore cleanup errors.
+        }
+      }
     }
   }, [requestKey, metrics, metricsByKey, primaryMetric, tileDefinition])
 
