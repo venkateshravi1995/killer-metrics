@@ -16,18 +16,13 @@ Each tile is configured using the `TileConfig` model. Key fields include:
   - `groupBy`: Dimension keys for grouping.
   - `filters`: Dimension filter objects: `{ id, dimension, values }`.
 - **Visual customization**
-  - `palette`: Palette identifier.
-  - `seriesColors`: Per-series override color map.
-  - `showLegend`, `legendPosition` (`top`, `bottom`, `left`, `right`).
-  - `showGrid` (chart grids), `showPoints` (line/area markers).
-  - `smooth` (line/area curve type), `lineStyle` (`solid`/`dashed`), `lineWidth`.
-  - `xAxisLabelMode` (`auto`/`short`/`full`), `xAxisLabelAngle`.
-  - `orientation` (`vertical`/`horizontal`) for bar charts.
-  - `barRadius`, `barGap` (bar charts).
-  - `donutLabelMode` (`name`, `value`, `percent`, `name_percent`).
-  - `donutLabelPosition` (`inside`, `outside`).
-  - `donutInnerRadius`, `donutOuterRadius`, `donutSlicePadding`.
-  - `kpiDeltaMode` (`percent`, `value`, `both`).
+  - `visuals`: Tile-specific visual options object (varies by `vizType`).
+  - Common fields include `visuals.palette`, `visuals.seriesColors`, `visuals.showLegend`, `visuals.legendPosition`.
+  - Line/area/bar fields include `visuals.showGrid`, `visuals.showPoints`, `visuals.smooth`, `visuals.lineStyle`, `visuals.lineWidth`.
+  - Axis fields include `visuals.xAxisLabelMode` (`auto`/`short`/`full`) and `visuals.xAxisLabelAngle`.
+  - Bar fields include `visuals.orientation` (`vertical`/`horizontal`), `visuals.barRadius`, `visuals.barGap`.
+  - Donut fields include `visuals.showDataLabels`, `visuals.donutLabelMode`, `visuals.donutLabelPosition`, `visuals.donutInnerRadius`, `visuals.donutOuterRadius`, `visuals.donutSlicePadding`.
+  - KPI fields include `visuals.kpiDeltaMode` (`percent`, `value`, `both`) plus the KPI-specific controls.
 
 ## Tile types and customization options
 The following tile types are available. Each tile’s customization options correspond to the visual options in its tile definition.

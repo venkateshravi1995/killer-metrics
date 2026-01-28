@@ -1,4 +1,5 @@
-import type { MetricDefinition, PaletteOption, TileConfig } from "./types"
+import type { BaseTileConfig } from "./tile-config"
+import type { MetricDefinition, PaletteOption } from "./types"
 
 export const paletteOptions: PaletteOption[] = [
   {
@@ -24,44 +25,14 @@ export const paletteOptions: PaletteOption[] = [
 ]
 
 export const tileDefaults: Omit<
-  TileConfig,
-  "id" | "title" | "description" | "metricKeys" | "vizType" | "layout"
+  BaseTileConfig,
+  "id" | "title" | "description" | "metricKeys" | "vizType" | "layout" | "visuals"
 > = {
-  orientation: "vertical",
   apiBaseUrl: process.env.NEXT_PUBLIC_API_BASE_URL ?? "",
   grain: "hour",
   startTime: "",
   endTime: "",
   dataSource: "timeseries",
-  showLegend: false,
-  showGrid: true,
-  smooth: true,
-  showComparison: false,
-  showDataLabels: false,
-  showPoints: false,
-  lineStyle: "solid",
-  lineWidth: 2,
-  legendPosition: "top",
-  palette: "lagoon",
-  seriesColors: {},
-  xAxisLabelMode: "auto",
-  xAxisLabelAngle: 0,
-  barRadius: 6,
-  barGap: 12,
-  donutLabelMode: "name_percent",
-  donutLabelPosition: "outside",
-  donutInnerRadius: 55,
-  donutOuterRadius: 85,
-  donutSlicePadding: 2,
-  kpiDeltaMode: "percent",
-  kpiValueMode: "current",
-  kpiSecondaryValue: "none",
-  kpiDeltaBasis: "previous",
-  kpiShowDelta: true,
-  kpiDeltaStyle: "badge",
-  kpiShowLabel: true,
-  kpiAlignment: "left",
-  kpiValueSize: "lg",
   groupBy: [],
   filters: [],
   notes: "",

@@ -4,8 +4,8 @@ import type { ComponentType } from "react"
 import dynamic from "next/dynamic"
 import type {
   Layout,
-  LegacyResponsiveReactGridLayoutProps,
-} from "react-grid-layout/legacy"
+  ResponsiveProps,
+} from "react-grid-layout"
 import { cn } from "@/lib/utils"
 
 import type {
@@ -20,19 +20,19 @@ import { TileCard } from "./tile-card"
 import { gridBreakpoints, gridCols, type BreakpointKey } from "./utils"
 
 type ResponsiveGridLayoutProps = Omit<
-  LegacyResponsiveReactGridLayoutProps,
+  ResponsiveProps,
   "width"
 >
 
 const ResponsiveGridLayout = dynamic(
   async () => {
-    const mod = await import("react-grid-layout/legacy")
+    const mod = await import("react-grid-layout")
     return mod.WidthProvider(mod.Responsive)
   },
   { ssr: false }
 ) as ComponentType<ResponsiveGridLayoutProps>
 
-type GridLayouts = LegacyResponsiveReactGridLayoutProps["layouts"]
+type GridLayouts = ResponsiveProps["layouts"]
 
 type DashboardGridProps = {
   tiles: TileConfig[]

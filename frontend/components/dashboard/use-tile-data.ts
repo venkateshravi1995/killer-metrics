@@ -16,6 +16,7 @@ import { getTileDefinition } from "./tiles/registry"
 import type { TileRangeRequirement } from "./tiles/types"
 import type {
   AggregateGroup,
+  AxisLabelMode,
   ChartDatum,
   Filter,
   Grain,
@@ -176,7 +177,7 @@ const DEFAULT_METRIC: MetricDefinition = {
 function formatPeriodLabel(
   value: string,
   grain: Grain,
-  mode: TileConfig["xAxisLabelMode"],
+  mode: AxisLabelMode,
   includeYear: boolean
 ) {
   const date = new Date(value)
@@ -191,6 +192,11 @@ function formatPeriodLabel(
   }
   const formatOptions = includeYear ? dateFormatsFull[grain] : dateFormatsShort[grain]
   return new Intl.DateTimeFormat("en-US", formatOptions).format(date)
+}
+
+function resolveAxisLabelMode(tile: TileConfig): AxisLabelMode {
+  const visuals = tile.visuals as { xAxisLabelMode?: AxisLabelMode }
+  return visuals.xAxisLabelMode ?? "auto"
 }
 
 function parseIsoDate(value?: string | null) {
@@ -425,9 +431,10 @@ function buildTimeseriesData(
       .filter((date) => !Number.isNaN(date.getTime()))
       .map((date) => date.getFullYear())
   )
+  const axisLabelMode = resolveAxisLabelMode(tile)
   const includeYear =
-    tile.xAxisLabelMode === "full" ||
-    (tile.xAxisLabelMode === "auto" && yearSet.size > 1)
+    axisLabelMode === "full" ||
+    (axisLabelMode === "auto" && yearSet.size > 1)
 
   let chartData: ChartDatum[] = Array.from(rowsByTime.values())
     .sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime())
@@ -436,7 +443,7 @@ function buildTimeseriesData(
       return {
         ...rest,
         time,
-        period: formatPeriodLabel(time, tile.grain, tile.xAxisLabelMode, includeYear),
+        period: formatPeriodLabel(time, tile.grain, axisLabelMode, includeYear),
       }
     })
 
@@ -943,9 +950,10 @@ export function useTileData(
         .filter((date) => !Number.isNaN(date.getTime()))
         .map((date) => date.getFullYear())
     )
+    const axisLabelMode = resolveAxisLabelMode(tile)
     const includeYear =
-      tile.xAxisLabelMode === "full" ||
-      (tile.xAxisLabelMode === "auto" && yearSet.size > 1)
+      axisLabelMode === "full" ||
+      (axisLabelMode === "auto" && yearSet.size > 1)
     const chartData = data.chartData.map((row) => {
       const time = String(row.time ?? "")
       if (!time) {
@@ -953,11 +961,11 @@ export function useTileData(
       }
       return {
         ...row,
-        period: formatPeriodLabel(time, tile.grain, tile.xAxisLabelMode, includeYear),
+        period: formatPeriodLabel(time, tile.grain, axisLabelMode, includeYear),
       }
     })
     return { ...state, data: { ...data, chartData } }
-  }, [state, tile.grain, tile.xAxisLabelMode])
+  }, [state, tile.grain, tile.visuals])
 
   return resolvedState
 }

@@ -8,14 +8,19 @@ import { cn } from "@/lib/utils"
 
 import { formatDelta, formatMetricValue } from "../../data"
 import { DefaultTileConfigurator } from "../configurator/default"
+import type {
+  KpiAlignment,
+  KpiDeltaBasis,
+  KpiDeltaMode,
+  KpiDeltaStyle,
+  KpiSecondaryValue,
+  KpiTileConfig,
+  KpiValueMode,
+  KpiValueSize,
+} from "./config"
+import { kpiVisualDefaults } from "./config"
 import type { TileConfiguratorComponent, TileDefinition, TileRenderProps } from "../types"
 
-type KpiValueMode = NonNullable<TileRenderProps["tile"]["kpiValueMode"]>
-type KpiSecondaryValue = NonNullable<TileRenderProps["tile"]["kpiSecondaryValue"]>
-type KpiDeltaBasis = NonNullable<TileRenderProps["tile"]["kpiDeltaBasis"]>
-type KpiDeltaStyle = NonNullable<TileRenderProps["tile"]["kpiDeltaStyle"]>
-type KpiAlignment = NonNullable<TileRenderProps["tile"]["kpiAlignment"]>
-type KpiValueSize = NonNullable<TileRenderProps["tile"]["kpiValueSize"]>
 type KpiStatKey =
   | "current"
   | "average"
@@ -46,16 +51,19 @@ type KpiStats = {
   average: number | null
 }
 
-function formatDeltaValue(value: number, metric: TileRenderProps["primaryMetric"]) {
+function formatDeltaValue(
+  value: number,
+  metric: TileRenderProps<KpiTileConfig>["primaryMetric"]
+) {
   const formatted = formatMetricValue(Math.abs(value), metric)
   return `${value >= 0 ? "+" : "-"}${formatted}`
 }
 
 function formatKpiDelta(
-  mode: TileRenderProps["tile"]["kpiDeltaMode"],
+  mode: KpiDeltaMode,
   value: number | null,
   percent: number | null,
-  metric: TileRenderProps["primaryMetric"]
+  metric: TileRenderProps<KpiTileConfig>["primaryMetric"]
 ) {
   if (value === null || !Number.isFinite(value)) {
     return null
@@ -76,7 +84,7 @@ function formatKpiDelta(
 }
 
 function getSeriesValues(
-  chartData: TileRenderProps["chartData"],
+  chartData: TileRenderProps<KpiTileConfig>["chartData"],
   seriesKey: string,
   fallbackCurrent: number
 ) {
@@ -136,16 +144,17 @@ function KpiTile({
   chartData,
   current,
   accentColor,
-}: TileRenderProps) {
-  const valueMode: KpiValueMode = tile.kpiValueMode ?? "current"
-  const secondaryMode: KpiSecondaryValue = tile.kpiSecondaryValue ?? "none"
-  const deltaBasis: KpiDeltaBasis = tile.kpiDeltaBasis ?? "previous"
-  const deltaMode = tile.kpiDeltaMode ?? "percent"
-  const showDelta = tile.kpiShowDelta ?? true
-  const deltaStyle: KpiDeltaStyle = tile.kpiDeltaStyle ?? "badge"
-  const showLabel = tile.kpiShowLabel ?? true
-  const alignment: KpiAlignment = tile.kpiAlignment ?? "left"
-  const valueSize: KpiValueSize = tile.kpiValueSize ?? "lg"
+}: TileRenderProps<KpiTileConfig>) {
+  const { visuals } = tile
+  const valueMode: KpiValueMode = visuals.kpiValueMode
+  const secondaryMode: KpiSecondaryValue = visuals.kpiSecondaryValue
+  const deltaBasis: KpiDeltaBasis = visuals.kpiDeltaBasis
+  const deltaMode = visuals.kpiDeltaMode
+  const showDelta = visuals.kpiShowDelta
+  const deltaStyle: KpiDeltaStyle = visuals.kpiDeltaStyle
+  const showLabel = visuals.kpiShowLabel
+  const alignment: KpiAlignment = visuals.kpiAlignment
+  const valueSize: KpiValueSize = visuals.kpiValueSize
   const seriesKey = series[0]?.key ?? ""
   const values = getSeriesValues(chartData, seriesKey, current)
   const stats = buildKpiStats(values)
@@ -172,7 +181,7 @@ function KpiTile({
     : null
   const isPositive = (deltaValue ?? 0) >= 0
   const canShowSparkline =
-    tile.showComparison && chartData.length > 1 && Boolean(seriesKey)
+    visuals.showComparison && chartData.length > 1 && Boolean(seriesKey)
   const showFooter = Boolean(deltaLabel || canShowSparkline)
   const alignmentClass =
     alignment === "center" ? "items-center text-center" : "items-start"
@@ -242,12 +251,12 @@ function KpiTile({
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={chartData}>
                   <Area
-                    type={tile.smooth ? "monotone" : "linear"}
+                    type={visuals.smooth ? "monotone" : "linear"}
                     dataKey={seriesKey}
                     stroke={accentColor}
                     fill={accentColor}
                     fillOpacity={0.2}
-                    strokeWidth={tile.lineWidth}
+                    strokeWidth={visuals.lineWidth}
                   />
                 </AreaChart>
               </ResponsiveContainer>
@@ -259,11 +268,11 @@ function KpiTile({
   )
 }
 
-const KpiConfigurator: TileConfiguratorComponent = (props) => (
+const KpiConfigurator: TileConfiguratorComponent<KpiTileConfig> = (props) => (
   <DefaultTileConfigurator {...props} />
 )
 
-export const kpiTileDefinition: TileDefinition = {
+export const kpiTileDefinition: TileDefinition<KpiTileConfig> = {
   type: "kpi",
   label: "KPI",
   description: "Highlight the latest value and change.",
@@ -295,19 +304,19 @@ export const kpiTileDefinition: TileDefinition = {
     kpiAlignment: true,
     kpiValueSize: true,
   },
+  visualDefaults: kpiVisualDefaults,
   render: KpiTile,
   configurator: KpiConfigurator,
   getMinSize: (tile) => {
-    const showLabel = tile.kpiShowLabel ?? true
-    const showDelta = tile.kpiShowDelta ?? true
-    const hasSecondary =
-      (tile.kpiSecondaryValue ?? "none") !== "none"
-    const valueSize = tile.kpiValueSize ?? "lg"
+    const showLabel = tile.visuals.kpiShowLabel
+    const showDelta = tile.visuals.kpiShowDelta
+    const hasSecondary = tile.visuals.kpiSecondaryValue !== "none"
+    const valueSize = tile.visuals.kpiValueSize
     let minH = valueSize === "xl" ? 3 : 2
     if (showLabel) minH += 1
     if (hasSecondary) minH += 1
-    if (showDelta || tile.showComparison) minH += 1
-    if (tile.showComparison) minH += 1
+    if (showDelta || tile.visuals.showComparison) minH += 1
+    if (tile.visuals.showComparison) minH += 1
     return { minW: 3, minH }
   },
 }

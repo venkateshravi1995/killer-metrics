@@ -12,8 +12,8 @@ import type {
 } from "../types"
 import type { AvailabilityResponse, DimensionValueItem } from "../api"
 
-export type TileRenderProps = {
-  tile: TileConfig
+export type TileRenderProps<TConfig extends TileConfig = TileConfig> = {
+  tile: TConfig
   metrics: MetricDefinition[]
   primaryMetric: MetricDefinition
   chartData: ChartDatum[]
@@ -61,8 +61,8 @@ export type TileVisualOptions = {
   kpiValueSize?: boolean
 }
 
-export type TileDefinition = {
-  type: VizType
+export type TileDefinition<TConfig extends TileConfig = TileConfig> = {
+  type: TConfig["vizType"]
   label: string
   description: string
   minSize: { w: number; h: number }
@@ -79,18 +79,19 @@ export type TileDefinition = {
     description: string
   }
   visualOptions: TileVisualOptions
-  render: (props: TileRenderProps) => ReactElement
-  getMinSize?: (tile: TileConfig) => { minW: number; minH: number }
-  configurator?: TileConfiguratorComponent
+  visualDefaults: TConfig["visuals"]
+  render: (props: TileRenderProps<TConfig>) => ReactElement
+  getMinSize?: (tile: TConfig) => { minW: number; minH: number }
+  configurator?: TileConfiguratorComponent<TConfig>
 }
 
-export type TileConfiguratorProps = {
-  tile: TileConfig
-  onUpdate: (tileId: string, updates: Partial<TileConfig>) => void
+export type TileConfiguratorProps<TConfig extends TileConfig = TileConfig> = {
+  tile: TConfig
+  onUpdate: (tileId: string, updates: Partial<TConfig>) => void
   metrics: MetricDefinition[]
   dimensions: DimensionDefinition[]
   series: SeriesDefinition[]
-  tileDefinition: TileDefinition
+  tileDefinition: TileDefinition<TConfig>
   tileDefinitions: TileDefinition[]
   activeTab: "data" | "visuals"
   onTabChange: (tab: "data" | "visuals") => void
@@ -108,4 +109,6 @@ export type TileConfiguratorProps = {
   clearSeriesColors: () => void
 }
 
-export type TileConfiguratorComponent = (props: TileConfiguratorProps) => ReactElement
+export type TileConfiguratorComponent<TConfig extends TileConfig = TileConfig> = (
+  props: TileConfiguratorProps<TConfig>
+) => ReactElement

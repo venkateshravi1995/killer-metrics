@@ -13,6 +13,8 @@ import {
 
 import { formatMetricValue, getPalette } from "../../data"
 import { DefaultTileConfigurator } from "../configurator/default"
+import type { BarTileConfig } from "./config"
+import { barVisualDefaults } from "./config"
 import type { TileConfiguratorComponent, TileDefinition, TileRenderProps } from "../types"
 import { tooltipStyles } from "../shared/tooltip"
 
@@ -23,28 +25,29 @@ function BarTile({
   chartData,
   accentColor,
   xKey,
-}: TileRenderProps) {
-  const isHorizontal = tile.orientation === "horizontal"
-  const palette = getPalette(tile.palette)
+}: TileRenderProps<BarTileConfig>) {
+  const { visuals } = tile
+  const isHorizontal = visuals.orientation === "horizontal"
+  const palette = getPalette(visuals.palette)
   const metricsByKey = new Map(metrics.map((entry) => [entry.key, entry]))
   const seriesByKey = new Map(series.map((entry) => [entry.key, entry]))
   const legendProps =
-    tile.legendPosition === "left" || tile.legendPosition === "right"
+    visuals.legendPosition === "left" || visuals.legendPosition === "right"
       ? {
           layout: "vertical" as const,
-          align: tile.legendPosition,
+          align: visuals.legendPosition,
           verticalAlign: "middle" as const,
         }
       : {
           layout: "horizontal" as const,
           align: "center" as const,
-          verticalAlign: tile.legendPosition,
+          verticalAlign: visuals.legendPosition,
         }
   const xAxisTick = {
     fontSize: 11,
     fill: "var(--muted-foreground)",
-    angle: tile.xAxisLabelAngle,
-    textAnchor: (tile.xAxisLabelAngle < 0 ? "end" : "middle") as
+    angle: visuals.xAxisLabelAngle,
+    textAnchor: (visuals.xAxisLabelAngle < 0 ? "end" : "middle") as
       | "end"
       | "middle",
   }
@@ -54,9 +57,9 @@ function BarTile({
         data={chartData}
         layout={isHorizontal ? "vertical" : "horizontal"}
         margin={{ top: 8, right: 16, left: 0, bottom: 0 }}
-        barCategoryGap={`${tile.barGap}%`}
+        barCategoryGap={`${visuals.barGap}%`}
       >
-        {tile.showGrid ? (
+        {visuals.showGrid ? (
           <CartesianGrid strokeDasharray="4 6" stroke="var(--border)" />
         ) : null}
         {isHorizontal ? (
@@ -84,7 +87,7 @@ function BarTile({
               tickLine={false}
               tick={xAxisTick}
               minTickGap={8}
-              height={tile.xAxisLabelAngle ? 48 : 30}
+              height={visuals.xAxisLabelAngle ? 48 : 30}
             />
             <YAxis
               axisLine={false}
@@ -105,11 +108,11 @@ function BarTile({
           }}
           contentStyle={tooltipStyles}
         />
-        {tile.showLegend ? (
+        {visuals.showLegend ? (
           <Legend {...legendProps} iconType="circle" wrapperStyle={{ fontSize: "11px" }} />
         ) : null}
         {series.map((entry, index) => {
-          const colorOverride = tile.seriesColors[entry.key]
+          const colorOverride = visuals.seriesColors[entry.key]
           const color =
             colorOverride ??
             (series.length === 1
@@ -121,7 +124,7 @@ function BarTile({
               dataKey={entry.key}
               name={entry.label}
               fill={color}
-              radius={tile.barRadius}
+              radius={visuals.barRadius}
             />
           )
         })}
@@ -130,11 +133,11 @@ function BarTile({
   )
 }
 
-const BarConfigurator: TileConfiguratorComponent = (props) => (
+const BarConfigurator: TileConfiguratorComponent<BarTileConfig> = (props) => (
   <DefaultTileConfigurator {...props} />
 )
 
-export const barTileDefinition: TileDefinition = {
+export const barTileDefinition: TileDefinition<BarTileConfig> = {
   type: "bar",
   label: "Bar",
   description: "Compare values across time buckets with bars.",
@@ -162,11 +165,12 @@ export const barTileDefinition: TileDefinition = {
     barGap: true,
     axisLabels: true,
   },
+  visualDefaults: barVisualDefaults,
   render: BarTile,
   configurator: BarConfigurator,
   getMinSize: (tile) => {
     let minH = 4
-    if (tile.showLegend) minH += 1
+    if (tile.visuals.showLegend) minH += 1
     return { minW: 4, minH }
   },
 }

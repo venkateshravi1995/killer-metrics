@@ -64,7 +64,7 @@ export function TileCard({
   const tileState = useTileData(tile, metricsByKey)
   const tileData = tileState.data
   const summary = tileData.summary
-  const accentColor = getPalette(tile.palette).colors[0]
+  const accentColor = getPalette(tile.visuals.palette).colors[0]
   const metric = tileData.primaryMetric
   const groupByLabels = tile.groupBy.map(
     (key) => dimensionsByKey.get(key)?.label ?? key
