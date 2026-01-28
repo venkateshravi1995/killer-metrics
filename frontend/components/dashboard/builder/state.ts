@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import type { Layout } from "react-grid-layout/legacy"
+import type { Layout } from "react-grid-layout"
 
 import { tileDefaults } from "../data"
 import type {
@@ -553,17 +553,12 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
     if (!metrics.length) {
       return
     }
-    const definition = getTileDefinition(vizType)
-    const seeded = createTileConfig(
+    const draft = createTileConfig(
       metrics[0],
       { x: 0, y: Infinity, w: 6, h: 5 },
-      createId("tile")
+      createId("tile"),
+      vizType
     )
-    const draft: TileConfig = {
-      ...seeded,
-      vizType,
-      dataSource: definition.data.source,
-    }
     setPendingTile(draft)
     setConfiguratorMode("create")
     setConfiguratorOpen(true)
@@ -677,7 +672,14 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
     if (!source) {
       return
     }
-    const nextTile = applyMinSize({ ...source, ...updates }, cols)
+    const nextVisuals =
+      updates.visuals && typeof updates.visuals === "object"
+        ? { ...source.visuals, ...updates.visuals }
+        : source.visuals
+    const nextTile = applyMinSize(
+      { ...source, ...updates, visuals: nextVisuals } as TileConfig,
+      cols
+    )
     setTiles((prev) =>
       prev.map((tile) => (tile.id === tileId ? nextTile : tile))
     )

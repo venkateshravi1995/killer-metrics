@@ -586,7 +586,11 @@ export function ConfiguratorDrawer({
       if (!prev || prev.id !== tileId) {
         return prev
       }
-      return { ...prev, ...updates }
+      const nextVisuals =
+        updates.visuals && typeof updates.visuals === "object"
+          ? { ...prev.visuals, ...updates.visuals }
+          : prev.visuals
+      return { ...prev, ...updates, visuals: nextVisuals } as TileConfig
     })
   }
 

@@ -2,6 +2,8 @@
 
 import { formatMetricValue, getPalette } from "../../data"
 import { DefaultTileConfigurator } from "../configurator/default"
+import type { TableTileConfig } from "./config"
+import { tableVisualDefaults } from "./config"
 import type { TileConfiguratorComponent, TileDefinition, TileRenderProps } from "../types"
 
 function TableTile({
@@ -10,8 +12,8 @@ function TableTile({
   primaryMetric,
   aggregates,
   groupByLabels,
-}: TileRenderProps) {
-  const palette = getPalette(tile.palette)
+}: TileRenderProps<TableTileConfig>) {
+  const palette = getPalette(tile.visuals.palette)
   const showShare = metrics.length === 1
   const dimensionKeys = tile.groupBy
   const rowsByKey = new Map<string, Record<string, string | number>>()
@@ -130,11 +132,11 @@ function TableTile({
   )
 }
 
-const TableConfigurator: TileConfiguratorComponent = (props) => (
+const TableConfigurator: TileConfiguratorComponent<TableTileConfig> = (props) => (
   <DefaultTileConfigurator {...props} />
 )
 
-export const tableTileDefinition: TileDefinition = {
+export const tableTileDefinition: TileDefinition<TableTileConfig> = {
   type: "table",
   label: "Table",
   description: "List grouped values with totals and shares.",
@@ -153,6 +155,7 @@ export const tableTileDefinition: TileDefinition = {
   visualOptions: {
     palette: true,
   },
+  visualDefaults: tableVisualDefaults,
   render: TableTile,
   configurator: TableConfigurator,
   getMinSize: (tile) => {

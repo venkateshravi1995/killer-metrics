@@ -16,6 +16,7 @@ import { getTileDefinition } from "./tiles/registry"
 import type { TileRangeRequirement } from "./tiles/types"
 import type {
   AggregateGroup,
+  AxisLabelMode,
   ChartDatum,
   Filter,
   Grain,
@@ -176,7 +177,7 @@ const DEFAULT_METRIC: MetricDefinition = {
 function formatPeriodLabel(
   value: string,
   grain: Grain,
-  mode: TileConfig["xAxisLabelMode"],
+  mode: AxisLabelMode,
   includeYear: boolean
 ) {
   const date = new Date(value)
@@ -191,6 +192,11 @@ function formatPeriodLabel(
   }
   const formatOptions = includeYear ? dateFormatsFull[grain] : dateFormatsShort[grain]
   return new Intl.DateTimeFormat("en-US", formatOptions).format(date)
+}
+
+function resolveAxisLabelMode(tile: TileConfig): AxisLabelMode {
+  const visuals = tile.visuals as { xAxisLabelMode?: AxisLabelMode }
+  return visuals.xAxisLabelMode ?? "auto"
 }
 
 function parseIsoDate(value?: string | null) {
@@ -219,7 +225,23 @@ function getCacheLastUpdated<T>(cache: Map<string, CacheEntry<T>>, key: string) 
 }
 
 function isAbortError(error: unknown) {
-  return error instanceof DOMException && error.name === "AbortError"
+  if (!error) {
+    return false
+  }
+  if (error instanceof DOMException && error.name === "AbortError") {
+    return true
+  }
+  if (error instanceof Error && error.name === "AbortError") {
+    return true
+  }
+  if (typeof error === "object" && "name" in error) {
+    return (error as { name?: string }).name === "AbortError"
+  }
+  if (typeof error === "object" && "message" in error) {
+    const message = String((error as { message?: unknown }).message ?? "")
+    return message.includes("aborted")
+  }
+  return false
 }
 
 async function resolveTimeRange(
@@ -425,9 +447,10 @@ function buildTimeseriesData(
       .filter((date) => !Number.isNaN(date.getTime()))
       .map((date) => date.getFullYear())
   )
+  const axisLabelMode = resolveAxisLabelMode(tile)
   const includeYear =
-    tile.xAxisLabelMode === "full" ||
-    (tile.xAxisLabelMode === "auto" && yearSet.size > 1)
+    axisLabelMode === "full" ||
+    (axisLabelMode === "auto" && yearSet.size > 1)
 
   let chartData: ChartDatum[] = Array.from(rowsByTime.values())
     .sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime())
@@ -436,7 +459,7 @@ function buildTimeseriesData(
       return {
         ...rest,
         time,
-        period: formatPeriodLabel(time, tile.grain, tile.xAxisLabelMode, includeYear),
+        period: formatPeriodLabel(time, tile.grain, axisLabelMode, includeYear),
       }
     })
 
@@ -922,7 +945,13 @@ export function useTileData(
     load()
     return () => {
       isActive = false
-      controller.abort()
+      if (!signal.aborted) {
+        try {
+          controller.abort()
+        } catch {
+          // Some runtimes throw on abort; ignore cleanup errors.
+        }
+      }
     }
   }, [requestKey, metrics, metricsByKey, primaryMetric, tileDefinition])
 
@@ -943,9 +972,10 @@ export function useTileData(
         .filter((date) => !Number.isNaN(date.getTime()))
         .map((date) => date.getFullYear())
     )
+    const axisLabelMode = resolveAxisLabelMode(tile)
     const includeYear =
-      tile.xAxisLabelMode === "full" ||
-      (tile.xAxisLabelMode === "auto" && yearSet.size > 1)
+      axisLabelMode === "full" ||
+      (axisLabelMode === "auto" && yearSet.size > 1)
     const chartData = data.chartData.map((row) => {
       const time = String(row.time ?? "")
       if (!time) {
@@ -953,11 +983,11 @@ export function useTileData(
       }
       return {
         ...row,
-        period: formatPeriodLabel(time, tile.grain, tile.xAxisLabelMode, includeYear),
+        period: formatPeriodLabel(time, tile.grain, axisLabelMode, includeYear),
       }
     })
     return { ...state, data: { ...data, chartData } }
-  }, [state, tile.grain, tile.xAxisLabelMode])
+  }, [state, tile.grain, tile.visuals])
 
   return resolvedState
 }

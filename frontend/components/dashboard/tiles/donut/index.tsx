@@ -11,6 +11,8 @@ import {
 
 import { formatMetricValue, getPalette } from "../../data"
 import { DefaultTileConfigurator } from "../configurator/default"
+import type { DonutTileConfig, DonutTileVisuals } from "./config"
+import { donutVisualDefaults } from "./config"
 import type { TileConfiguratorComponent, TileDefinition, TileRenderProps } from "../types"
 import { tooltipStyles } from "../shared/tooltip"
 
@@ -32,11 +34,11 @@ function formatPercent(value: number) {
 }
 
 function buildLabelText(
-  mode: TileRenderProps["tile"]["donutLabelMode"],
+  mode: DonutTileVisuals["donutLabelMode"],
   name: string,
   value: number,
   percent: number,
-  metric: TileRenderProps["primaryMetric"]
+  metric: TileRenderProps<DonutTileConfig>["primaryMetric"]
 ) {
   if (mode === "name") {
     return name
@@ -52,8 +54,8 @@ function buildLabelText(
 
 function renderDonutLabel(
   props: PieLabelProps,
-  tile: TileRenderProps["tile"],
-  metric: TileRenderProps["primaryMetric"],
+  tile: DonutTileConfig,
+  metric: TileRenderProps<DonutTileConfig>["primaryMetric"],
   total: number
 ) {
   const {
@@ -78,21 +80,21 @@ function renderDonutLabel(
 
   const resolvedPercent = percent ?? value / total
   const labelText = buildLabelText(
-    tile.donutLabelMode,
+    tile.visuals.donutLabelMode,
     name,
     value,
     resolvedPercent,
     metric
   )
   const radius =
-    tile.donutLabelPosition === "inside"
+    tile.visuals.donutLabelPosition === "inside"
       ? innerRadius + (outerRadius - innerRadius) * 0.6
       : outerRadius + 14
   const x = cx + radius * Math.cos(-midAngle * RADIAN)
   const y = cy + radius * Math.sin(-midAngle * RADIAN)
   const isRight = x > cx
   const fill =
-    tile.donutLabelPosition === "inside"
+    tile.visuals.donutLabelPosition === "inside"
       ? "var(--foreground)"
       : "var(--muted-foreground)"
 
@@ -100,7 +102,13 @@ function renderDonutLabel(
     <text
       x={x}
       y={y}
-      textAnchor={tile.donutLabelPosition === "inside" ? "middle" : isRight ? "start" : "end"}
+      textAnchor={
+        tile.visuals.donutLabelPosition === "inside"
+          ? "middle"
+          : isRight
+            ? "start"
+            : "end"
+      }
       dominantBaseline="central"
       fontSize={11}
       fill={fill}
@@ -120,8 +128,8 @@ function buildCategoryLabel(dimensions: Record<string, string>, groupBy: string[
   return values.length ? values.join(" / ") : "Unknown"
 }
 
-function DonutTile({ tile, primaryMetric, aggregates }: TileRenderProps) {
-  const palette = getPalette(tile.palette)
+function DonutTile({ tile, primaryMetric, aggregates }: TileRenderProps<DonutTileConfig>) {
+  const palette = getPalette(tile.visuals.palette)
   const breakdown = aggregates
     .filter((group) => group.metricKey === primaryMetric.key)
     .map((group) => ({
@@ -130,16 +138,16 @@ function DonutTile({ tile, primaryMetric, aggregates }: TileRenderProps) {
     }))
   const total = breakdown.reduce((acc, entry) => acc + entry.value, 0)
   const legendProps =
-    tile.legendPosition === "left" || tile.legendPosition === "right"
+    tile.visuals.legendPosition === "left" || tile.visuals.legendPosition === "right"
       ? {
           layout: "vertical" as const,
-          align: tile.legendPosition,
+          align: tile.visuals.legendPosition,
           verticalAlign: "middle" as const,
         }
       : {
           layout: "horizontal" as const,
           align: "center" as const,
-          verticalAlign: tile.legendPosition,
+          verticalAlign: tile.visuals.legendPosition,
         }
   return (
     <ResponsiveContainer width="100%" height="100%">
@@ -150,7 +158,7 @@ function DonutTile({ tile, primaryMetric, aggregates }: TileRenderProps) {
           }
           contentStyle={tooltipStyles}
         />
-        {tile.showLegend ? (
+        {tile.visuals.showLegend ? (
           <Legend
             {...legendProps}
             iconType="circle"
@@ -161,22 +169,24 @@ function DonutTile({ tile, primaryMetric, aggregates }: TileRenderProps) {
           data={breakdown}
           dataKey="value"
           nameKey="name"
-          innerRadius={`${tile.donutInnerRadius}%`}
-          outerRadius={`${tile.donutOuterRadius}%`}
+          innerRadius={`${tile.visuals.donutInnerRadius}%`}
+          outerRadius={`${tile.visuals.donutOuterRadius}%`}
           stroke="transparent"
-          paddingAngle={tile.donutSlicePadding}
+          paddingAngle={tile.visuals.donutSlicePadding}
           label={
-            tile.showDataLabels
+            tile.visuals.showDataLabels
               ? (props) => renderDonutLabel(props, tile, primaryMetric, total)
               : false
           }
-          labelLine={tile.showDataLabels && tile.donutLabelPosition === "outside"}
+          labelLine={
+            tile.visuals.showDataLabels && tile.visuals.donutLabelPosition === "outside"
+          }
         >
           {breakdown.map((entry, index) => (
             <Cell
               key={entry.name}
               fill={
-                tile.seriesColors[entry.name] ??
+                tile.visuals.seriesColors[entry.name] ??
                 palette.colors[index % palette.colors.length]
               }
             />
@@ -187,11 +197,11 @@ function DonutTile({ tile, primaryMetric, aggregates }: TileRenderProps) {
   )
 }
 
-const DonutConfigurator: TileConfiguratorComponent = (props) => (
+const DonutConfigurator: TileConfiguratorComponent<DonutTileConfig> = (props) => (
   <DefaultTileConfigurator {...props} />
 )
 
-export const donutTileDefinition: TileDefinition = {
+export const donutTileDefinition: TileDefinition<DonutTileConfig> = {
   type: "donut",
   label: "Donut",
   description: "Show a proportional breakdown using a donut chart.",
@@ -219,11 +229,12 @@ export const donutTileDefinition: TileDefinition = {
     donutOuterRadius: true,
     donutSlicePadding: true,
   },
+  visualDefaults: donutVisualDefaults,
   render: DonutTile,
   configurator: DonutConfigurator,
   getMinSize: (tile) => {
     let minH = 4
-    if (tile.showLegend) minH += 1
+    if (tile.visuals.showLegend) minH += 1
     return { minW: 4, minH }
   },
 }

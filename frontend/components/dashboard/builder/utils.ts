@@ -2,11 +2,12 @@ import { inferMetricFormat, tileDefaults } from "../data"
 import type {
   DashboardConfig,
   DimensionDefinition,
-  Filter as TileFilter,
   MetricDefinition,
   TileConfig,
+  VizType,
 } from "../types"
 import { getTileDefinition } from "../tiles/registry"
+import type { TileDefinition } from "../tiles/types"
 import type { DimensionCatalogItem, MetricCatalogItem } from "../api"
 
 export const gridBreakpoints = { lg: 1200, md: 996, sm: 768, xs: 560, xxs: 0 }
@@ -26,8 +27,21 @@ function createSeedId(index: number) {
   return `tile-seed-${index + 1}`
 }
 
+function cloneVisuals<TVisuals extends Record<string, unknown>>(visuals: TVisuals) {
+  const cloned = { ...visuals } as TVisuals
+  if ("seriesColors" in cloned) {
+    const value = (cloned as { seriesColors?: unknown }).seriesColors
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      ;(cloned as { seriesColors?: Record<string, string> }).seriesColors = {
+        ...(value as Record<string, string>),
+      }
+    }
+  }
+  return cloned
+}
+
 export function getTileMinSize(tile: TileConfig) {
-  const definition = getTileDefinition(tile.vizType)
+  const definition = getTileDefinition(tile.vizType) as TileDefinition<TileConfig>
   if (definition.getMinSize) {
     return definition.getMinSize(tile)
   }
@@ -70,20 +84,24 @@ export function packTiles(tiles: TileConfig[], cols: number) {
 export function createTileConfig(
   metric: MetricDefinition,
   layout: { x: number; y: number; w: number; h: number },
-  id: string
+  id: string,
+  vizType: VizType = "line"
 ): TileConfig {
+  const definition = getTileDefinition(vizType)
+  const defaultVisuals = cloneVisuals(definition.visualDefaults)
   return {
     id,
     title: metric.label,
     description: metric.description ?? "",
     metricKeys: [metric.key],
-    vizType: "line",
+    vizType,
     layout,
     ...tileDefaults,
+    dataSource: definition.data.source,
     groupBy: [...tileDefaults.groupBy],
     filters: [...tileDefaults.filters],
-    seriesColors: { ...tileDefaults.seriesColors },
-  }
+    visuals: defaultVisuals,
+  } as TileConfig
 }
 
 export function seedTiles(metrics: MetricDefinition[], cols = gridCols.lg) {
@@ -115,30 +133,47 @@ export function extractTilesFromConfig(
   return []
 }
 
-export function normalizeTileConfig(tile: TileConfig) {
-  const sanitizedTile = { ...tile } as TileConfig & { rules?: unknown }
-  if ("rules" in sanitizedTile) {
-    delete sanitizedTile.rules
+function normalizeVisuals(
+  visuals: Record<string, unknown>,
+  defaults: Record<string, unknown>
+) {
+  const next = { ...defaults, ...visuals }
+  if ("seriesColors" in defaults) {
+    const value = next.seriesColors
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      next.seriesColors = { ...(value as Record<string, string>) }
+    } else {
+      next.seriesColors = { ...(defaults.seriesColors as Record<string, string>) }
+    }
   }
-  const legacy = sanitizedTile as TileConfig & {
-    metricKey?: string
-    breakdownDimension?: string
-    donutLegendPosition?: TileConfig["legendPosition"]
-  }
-  const metricKeys =
-    sanitizedTile.metricKeys?.length
-      ? sanitizedTile.metricKeys
-      : legacy.metricKey
-        ? [legacy.metricKey]
-        : []
+  Object.keys(defaults).forEach((key) => {
+    const defaultValue = defaults[key]
+    const currentValue = next[key]
+    if (currentValue === undefined) {
+      return
+    }
+    if (typeof defaultValue === "number" && typeof currentValue !== "number") {
+      next[key] = defaultValue
+    }
+    if (typeof defaultValue === "boolean" && typeof currentValue !== "boolean") {
+      next[key] = defaultValue
+    }
+    if (typeof defaultValue === "string" && typeof currentValue !== "string") {
+      next[key] = defaultValue
+    }
+  })
+  return next
+}
+
+export function normalizeTileConfig(tile: TileConfig): TileConfig {
+  const sanitizedTile = { ...tile }
+  const metricKeys = Array.isArray(sanitizedTile.metricKeys)
+    ? sanitizedTile.metricKeys
+    : []
   const uniqueMetricKeys = Array.from(new Set(metricKeys))
-  const groupBy =
-    sanitizedTile.groupBy?.length
-      ? sanitizedTile.groupBy
-      : legacy.breakdownDimension
-        ? [legacy.breakdownDimension]
-        : []
-  const definition = getTileDefinition(sanitizedTile.vizType)
+  const groupBy = Array.isArray(sanitizedTile.groupBy) ? sanitizedTile.groupBy : []
+  const vizType = sanitizedTile.vizType ?? "line"
+  const definition = getTileDefinition(vizType)
   const allowedSources = definition.data.allowedSources ?? [definition.data.source]
   const dataSource = allowedSources.includes(sanitizedTile.dataSource)
     ? sanitizedTile.dataSource
@@ -147,63 +182,34 @@ export function normalizeTileConfig(tile: TileConfig) {
   const trimmedMetricKeys =
     typeof maxMetrics === "number" ? uniqueMetricKeys.slice(0, maxMetrics) : uniqueMetricKeys
   const normalizedGroupBy = definition.data.supportsGroupBy ? groupBy : []
-  const legendPosition =
-    sanitizedTile.legendPosition ?? legacy.donutLegendPosition ?? tileDefaults.legendPosition
-  const seriesColors = sanitizedTile.seriesColors ?? tileDefaults.seriesColors
-  const xAxisLabelMode = sanitizedTile.xAxisLabelMode ?? tileDefaults.xAxisLabelMode
-  const xAxisLabelAngle =
-    typeof sanitizedTile.xAxisLabelAngle === "number"
-      ? sanitizedTile.xAxisLabelAngle
-      : tileDefaults.xAxisLabelAngle
-  const kpiValueMode = sanitizedTile.kpiValueMode ?? tileDefaults.kpiValueMode
-  const kpiSecondaryValue =
-    sanitizedTile.kpiSecondaryValue ?? tileDefaults.kpiSecondaryValue
-  const kpiDeltaMode = sanitizedTile.kpiDeltaMode ?? tileDefaults.kpiDeltaMode
-  const kpiDeltaBasis = sanitizedTile.kpiDeltaBasis ?? tileDefaults.kpiDeltaBasis
-  const kpiShowDelta = sanitizedTile.kpiShowDelta ?? tileDefaults.kpiShowDelta
-  const kpiDeltaStyle = sanitizedTile.kpiDeltaStyle ?? tileDefaults.kpiDeltaStyle
-  const kpiShowLabel = sanitizedTile.kpiShowLabel ?? tileDefaults.kpiShowLabel
-  const kpiAlignment = sanitizedTile.kpiAlignment ?? tileDefaults.kpiAlignment
-  const kpiValueSize = sanitizedTile.kpiValueSize ?? tileDefaults.kpiValueSize
-  const normalizedFilters = (sanitizedTile.filters ?? []).map((filter) => {
-    const legacyFilter = filter as TileFilter & {
-      value?: string
-      values?: string[]
-      valueIds?: number[]
-      dimensionId?: number
-    }
-    const values = Array.isArray(legacyFilter.values)
-      ? legacyFilter.values
-      : legacyFilter.value
-        ? [legacyFilter.value]
-        : []
-    const valueIds = Array.isArray(legacyFilter.valueIds)
-      ? legacyFilter.valueIds
-      : []
-    const dimensionId =
-      typeof legacyFilter.dimensionId === "number" ? legacyFilter.dimensionId : 0
-    return { ...filter, values, valueIds, dimensionId }
-  })
+  const visualDefaults = cloneVisuals(
+    definition.visualDefaults as Record<string, unknown>
+  )
+  const providedVisuals =
+    sanitizedTile.visuals && typeof sanitizedTile.visuals === "object"
+      ? sanitizedTile.visuals
+      : {}
+  const mergedVisuals = normalizeVisuals(providedVisuals, visualDefaults)
+  const normalizedFilters = Array.isArray(sanitizedTile.filters)
+    ? sanitizedTile.filters
+    : []
   return {
-    ...sanitizedTile,
+    id: sanitizedTile.id,
+    title: sanitizedTile.title ?? "Untitled",
+    description: sanitizedTile.description ?? "",
     metricKeys: trimmedMetricKeys,
-    groupBy: normalizedGroupBy,
+    vizType,
+    layout: sanitizedTile.layout,
+    apiBaseUrl: sanitizedTile.apiBaseUrl ?? tileDefaults.apiBaseUrl,
+    grain: sanitizedTile.grain ?? tileDefaults.grain,
+    startTime: sanitizedTile.startTime ?? tileDefaults.startTime,
+    endTime: sanitizedTile.endTime ?? tileDefaults.endTime,
     dataSource,
-    legendPosition,
-    seriesColors,
-    xAxisLabelMode,
-    xAxisLabelAngle,
-    kpiValueMode,
-    kpiSecondaryValue,
-    kpiDeltaMode,
-    kpiDeltaBasis,
-    kpiShowDelta,
-    kpiDeltaStyle,
-    kpiShowLabel,
-    kpiAlignment,
-    kpiValueSize,
+    groupBy: normalizedGroupBy,
     filters: normalizedFilters,
-  }
+    notes: sanitizedTile.notes ?? tileDefaults.notes,
+    visuals: mergedVisuals,
+  } as TileConfig
 }
 
 export function mapMetricDefinition(item: MetricCatalogItem): MetricDefinition {

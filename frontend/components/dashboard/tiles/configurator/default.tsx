@@ -35,7 +35,7 @@ import { DateTimePicker } from "@/components/ui/date-time-picker"
 
 import { getPalette } from "../../data"
 import type { DimensionKey, MetricKey, TileConfig, VizType } from "../../types"
-import type { TileConfiguratorProps } from "../types"
+import type { TileConfiguratorProps, TileDefinition } from "../types"
 
 const GRAIN_OPTIONS = [
   { value: "30m", label: "30 min" },
@@ -64,7 +64,7 @@ function formatAvailabilityRange(minDate?: Date, maxDate?: Date) {
   return `${format(minDate, "PP p")} - ${format(maxDate, "PP p")}`
 }
 
-export function DefaultTileConfigurator({
+export function DefaultTileConfigurator<TConfig extends TileConfig = TileConfig>({
   tile,
   onUpdate,
   metrics,
@@ -86,7 +86,7 @@ export function DefaultTileConfigurator({
   toggleGroupBy,
   updateSeriesColor,
   clearSeriesColors,
-}: TileConfiguratorProps) {
+}: TileConfiguratorProps<TConfig>) {
   const primaryMetricKey = tile.metricKeys[0] ?? ""
   const metric = metrics.find((item) => item.key === primaryMetricKey)
   const isGroupBy = tileDefinition.data.supportsGroupBy
@@ -104,6 +104,25 @@ export function DefaultTileConfigurator({
         }
       : tileDefinition.api
   const visualOptions = tileDefinition.visualOptions
+  const visuals = { ...tileDefinition.visualDefaults, ...tile.visuals } as Record<
+    string,
+    unknown
+  >
+  const updateVisuals = (updates: Record<string, unknown>) =>
+    onUpdate(
+      tile.id,
+      { visuals: updates as TConfig["visuals"] } as Partial<TConfig>
+    )
+  const mergeVisualsForDefinition = (definition: TileDefinition<TileConfig>) => {
+    const defaults = definition.visualDefaults as Record<string, unknown>
+    const merged: Record<string, unknown> = { ...defaults }
+    Object.keys(defaults).forEach((key) => {
+      if (visuals[key] !== undefined) {
+        merged[key] = visuals[key]
+      }
+    })
+    return merged
+  }
   const minAvailable = parseIsoDate(availability?.min_time_start_ts)
   const maxAvailable = parseIsoDate(availability?.max_time_start_ts)
   const hasAvailability = Boolean(minAvailable && maxAvailable)
@@ -147,17 +166,21 @@ export function DefaultTileConfigurator({
     tile.metricKeys.length <= 1 &&
     tile.groupBy.length === 0 &&
     (dataSource === "timeseries" || tileDefinition.type === "kpi")
-  const palette = getPalette(tile.palette)
-  const hasSeriesOverrides = Object.keys(tile.seriesColors).length > 0
-  const kpiValueMode = tile.kpiValueMode ?? "current"
-  const kpiSecondaryValue = tile.kpiSecondaryValue ?? "none"
-  const kpiDeltaMode = tile.kpiDeltaMode ?? "percent"
-  const kpiDeltaBasis = tile.kpiDeltaBasis ?? "previous"
-  const kpiShowDelta = tile.kpiShowDelta ?? true
-  const kpiDeltaStyle = tile.kpiDeltaStyle ?? "badge"
-  const kpiShowLabel = tile.kpiShowLabel ?? true
-  const kpiAlignment = tile.kpiAlignment ?? "left"
-  const kpiValueSize = tile.kpiValueSize ?? "lg"
+  const palette = getPalette(String(visuals.palette ?? "lagoon"))
+  const hasSeriesOverrides =
+    typeof visuals.seriesColors === "object" &&
+    visuals.seriesColors !== null &&
+    Object.keys(visuals.seriesColors as Record<string, string>).length > 0
+  const kpiValueMode = (visuals.kpiValueMode as string | undefined) ?? "current"
+  const kpiSecondaryValue =
+    (visuals.kpiSecondaryValue as string | undefined) ?? "none"
+  const kpiDeltaMode = (visuals.kpiDeltaMode as string | undefined) ?? "percent"
+  const kpiDeltaBasis = (visuals.kpiDeltaBasis as string | undefined) ?? "previous"
+  const kpiShowDelta = (visuals.kpiShowDelta as boolean | undefined) ?? true
+  const kpiDeltaStyle = (visuals.kpiDeltaStyle as string | undefined) ?? "badge"
+  const kpiShowLabel = (visuals.kpiShowLabel as boolean | undefined) ?? true
+  const kpiAlignment = (visuals.kpiAlignment as string | undefined) ?? "left"
+  const kpiValueSize = (visuals.kpiValueSize as string | undefined) ?? "lg"
   const comparisonLabel =
     tileDefinition.type === "kpi" ? "Sparkline" : "Comparison overlay"
   const showKpiControls = tileDefinition.type === "kpi"
@@ -187,8 +210,8 @@ export function DefaultTileConfigurator({
             <Select
               value={kpiValueMode}
               onValueChange={(value) =>
-                onUpdate(tile.id, {
-                  kpiValueMode: value as TileConfig["kpiValueMode"],
+                updateVisuals({
+                  kpiValueMode: value,
                 })
               }
             >
@@ -212,8 +235,8 @@ export function DefaultTileConfigurator({
             <Select
               value={kpiSecondaryValue}
               onValueChange={(value) =>
-                onUpdate(tile.id, {
-                  kpiSecondaryValue: value as TileConfig["kpiSecondaryValue"],
+                updateVisuals({
+                  kpiSecondaryValue: value,
                 })
               }
             >
@@ -238,7 +261,7 @@ export function DefaultTileConfigurator({
             <Switch
               checked={kpiShowLabel}
               onCheckedChange={(value) =>
-                onUpdate(tile.id, { kpiShowLabel: value })
+                updateVisuals({ kpiShowLabel: value })
               }
             />
           </label>
@@ -249,7 +272,7 @@ export function DefaultTileConfigurator({
             <Switch
               checked={kpiShowDelta}
               onCheckedChange={(value) =>
-                onUpdate(tile.id, { kpiShowDelta: value })
+                updateVisuals({ kpiShowDelta: value })
               }
             />
           </label>
@@ -260,8 +283,8 @@ export function DefaultTileConfigurator({
             <Select
               value={kpiDeltaBasis}
               onValueChange={(value) =>
-                onUpdate(tile.id, {
-                  kpiDeltaBasis: value as TileConfig["kpiDeltaBasis"],
+                updateVisuals({
+                  kpiDeltaBasis: value,
                 })
               }
             >
@@ -282,8 +305,8 @@ export function DefaultTileConfigurator({
             <Select
               value={kpiDeltaMode}
               onValueChange={(value) =>
-                onUpdate(tile.id, {
-                  kpiDeltaMode: value as TileConfig["kpiDeltaMode"],
+                updateVisuals({
+                  kpiDeltaMode: value,
                 })
               }
             >
@@ -304,8 +327,8 @@ export function DefaultTileConfigurator({
             <Select
               value={kpiDeltaStyle}
               onValueChange={(value) =>
-                onUpdate(tile.id, {
-                  kpiDeltaStyle: value as TileConfig["kpiDeltaStyle"],
+                updateVisuals({
+                  kpiDeltaStyle: value,
                 })
               }
             >
@@ -325,8 +348,8 @@ export function DefaultTileConfigurator({
             <Select
               value={kpiAlignment}
               onValueChange={(value) =>
-                onUpdate(tile.id, {
-                  kpiAlignment: value as TileConfig["kpiAlignment"],
+                updateVisuals({
+                  kpiAlignment: value,
                 })
               }
             >
@@ -346,8 +369,8 @@ export function DefaultTileConfigurator({
             <Select
               value={kpiValueSize}
               onValueChange={(value) =>
-                onUpdate(tile.id, {
-                  kpiValueSize: value as TileConfig["kpiValueSize"],
+                updateVisuals({
+                  kpiValueSize: value,
                 })
               }
             >
@@ -425,17 +448,26 @@ export function DefaultTileConfigurator({
                     const comparisonAllowed =
                       nextDefinition.type === "kpi" || nextDataSource === "timeseries"
                     const disableComparison =
-                      tile.showComparison &&
+                      Boolean(visuals.showComparison) &&
                       (!comparisonAllowed ||
                         nextMetricKeys.length > 1 ||
                         nextGroupBy.length > 0)
-                    onUpdate(tile.id, {
-                      vizType: nextType,
-                      dataSource: nextDataSource,
-                      metricKeys: nextMetricKeys,
-                      groupBy: nextGroupBy,
-                      ...(disableComparison ? { showComparison: false } : {}),
-                    })
+                    const nextVisuals = mergeVisualsForDefinition(
+                      nextDefinition as TileDefinition<TileConfig>
+                    )
+                    if (disableComparison && "showComparison" in nextVisuals) {
+                      nextVisuals.showComparison = false
+                    }
+                    onUpdate(
+                      tile.id,
+                      {
+                        vizType: nextType,
+                        dataSource: nextDataSource,
+                        metricKeys: nextMetricKeys,
+                        groupBy: nextGroupBy,
+                        visuals: nextVisuals as TileConfig["visuals"],
+                      } as Partial<TConfig>
+                    )
                   })()
                 }
               >
@@ -467,15 +499,23 @@ export function DefaultTileConfigurator({
                       const comparisonAllowed =
                         tileDefinition.type === "kpi" || nextSource === "timeseries"
                       const disableComparison =
-                        tile.showComparison &&
+                        Boolean(visuals.showComparison) &&
                         (!comparisonAllowed ||
                           tile.metricKeys.length > 1 ||
                           nextGroupBy.length > 0)
-                      onUpdate(tile.id, {
-                        dataSource: nextSource,
-                        groupBy: nextGroupBy,
-                        ...(disableComparison ? { showComparison: false } : {}),
-                      })
+                      const nextVisuals = disableComparison
+                        ? ({ showComparison: false } as Record<string, unknown>)
+                        : null
+                      onUpdate(
+                        tile.id,
+                        {
+                          dataSource: nextSource,
+                          groupBy: nextGroupBy,
+                          ...(nextVisuals
+                            ? { visuals: nextVisuals as TileConfig["visuals"] }
+                            : {}),
+                        } as Partial<TConfig>
+                      )
                     })()
                   }
                 >
@@ -505,7 +545,12 @@ export function DefaultTileConfigurator({
               <Label>Title</Label>
               <Input
                 value={tile.title}
-                onChange={(event) => onUpdate(tile.id, { title: event.target.value })}
+                onChange={(event) =>
+                  onUpdate(
+                    tile.id,
+                    { title: event.target.value } as Partial<TConfig>
+                  )
+                }
               />
             </div>
             <div className="space-y-2">
@@ -514,7 +559,10 @@ export function DefaultTileConfigurator({
                 rows={3}
                 value={tile.description}
                 onChange={(event) =>
-                  onUpdate(tile.id, { description: event.target.value })
+                  onUpdate(
+                    tile.id,
+                    { description: event.target.value } as Partial<TConfig>
+                  )
                 }
               />
             </div>
@@ -533,7 +581,10 @@ export function DefaultTileConfigurator({
                 <Select
                   value={tile.metricKeys[0] ?? ""}
                   onValueChange={(value) =>
-                    onUpdate(tile.id, { metricKeys: [value as MetricKey] })
+                    onUpdate(
+                      tile.id,
+                      { metricKeys: [value as MetricKey] } as Partial<TConfig>
+                    )
                   }
                 >
                   <SelectTrigger>
@@ -590,9 +641,12 @@ export function DefaultTileConfigurator({
                   <Select
                     value={tile.groupBy[0] ?? ""}
                     onValueChange={(value) =>
-                      onUpdate(tile.id, {
-                        groupBy: value ? [value as DimensionKey] : [],
-                      })
+                      onUpdate(
+                        tile.id,
+                        {
+                          groupBy: value ? [value as DimensionKey] : [],
+                        } as Partial<TConfig>
+                      )
                     }
                   >
                     <SelectTrigger>
@@ -660,7 +714,10 @@ export function DefaultTileConfigurator({
                 <Select
                   value={tile.grain}
                   onValueChange={(value) =>
-                    onUpdate(tile.id, { grain: value as TileConfig["grain"] })
+                    onUpdate(
+                      tile.id,
+                      { grain: value as TileConfig["grain"] } as Partial<TConfig>
+                    )
                   }
                 >
                   <SelectTrigger>
@@ -684,10 +741,13 @@ export function DefaultTileConfigurator({
                     size="xs"
                     variant="secondary"
                     onClick={() =>
-                      onUpdate(tile.id, {
-                        startTime: minAvailable?.toISOString() ?? "",
-                        endTime: maxAvailable?.toISOString() ?? "",
-                      })
+                      onUpdate(
+                        tile.id,
+                        {
+                          startTime: minAvailable?.toISOString() ?? "",
+                          endTime: maxAvailable?.toISOString() ?? "",
+                        } as Partial<TConfig>
+                      )
                     }
                   >
                     Use full range
@@ -702,9 +762,10 @@ export function DefaultTileConfigurator({
                 <DateTimePicker
                   value={parseIsoDate(tile.startTime)}
                   onChange={(date) =>
-                    onUpdate(tile.id, {
-                      startTime: date ? date.toISOString() : "",
-                    })
+                    onUpdate(
+                      tile.id,
+                      { startTime: date ? date.toISOString() : "" } as Partial<TConfig>
+                    )
                   }
                   minDate={minAvailable}
                   maxDate={maxAvailable}
@@ -717,7 +778,10 @@ export function DefaultTileConfigurator({
                 <DateTimePicker
                   value={parseIsoDate(tile.endTime)}
                   onChange={(date) =>
-                    onUpdate(tile.id, { endTime: date ? date.toISOString() : "" })
+                    onUpdate(
+                      tile.id,
+                      { endTime: date ? date.toISOString() : "" } as Partial<TConfig>
+                    )
                   }
                   minDate={minAvailable}
                   maxDate={maxAvailable}
@@ -880,7 +944,10 @@ export function DefaultTileConfigurator({
                   <div className="space-y-2">
                     {series.map((entry, index) => {
                       const fallback = palette.colors[index % palette.colors.length]
-                      const custom = tile.seriesColors[entry.key]
+                      const custom =
+                        (visuals.seriesColors as Record<string, string> | undefined)?.[
+                          entry.key
+                        ]
                       const colorValue = custom ?? fallback
                       return (
                         <div
@@ -940,23 +1007,17 @@ export function DefaultTileConfigurator({
                 <label className="flex items-center justify-between text-sm">
                   <span>Show legend</span>
                   <Switch
-                    checked={tile.showLegend}
-                    onCheckedChange={(value) =>
-                      onUpdate(tile.id, { showLegend: value })
-                    }
+                    checked={Boolean(visuals.showLegend)}
+                    onCheckedChange={(value) => updateVisuals({ showLegend: value })}
                   />
                 </label>
               ) : null}
-              {visualOptions.legendPosition && tile.showLegend ? (
+              {visualOptions.legendPosition && visuals.showLegend ? (
                 <div className="space-y-2">
                   <Label>Legend position</Label>
                   <Select
-                    value={tile.legendPosition}
-                    onValueChange={(value) =>
-                      onUpdate(tile.id, {
-                        legendPosition: value as TileConfig["legendPosition"],
-                      })
-                    }
+                    value={String(visuals.legendPosition ?? "top")}
+                    onValueChange={(value) => updateVisuals({ legendPosition: value })}
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="Select legend position" />
@@ -985,12 +1046,8 @@ export function DefaultTileConfigurator({
                 <div className="space-y-2">
                   <Label>X-axis label format</Label>
                   <Select
-                    value={tile.xAxisLabelMode}
-                    onValueChange={(value) =>
-                      onUpdate(tile.id, {
-                        xAxisLabelMode: value as TileConfig["xAxisLabelMode"],
-                      })
-                    }
+                    value={String(visuals.xAxisLabelMode ?? "auto")}
+                    onValueChange={(value) => updateVisuals({ xAxisLabelMode: value })}
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="Select label format" />
@@ -1006,10 +1063,8 @@ export function DefaultTileConfigurator({
               <div className="space-y-2">
                 <Label>X-axis label angle</Label>
                 <Select
-                  value={String(tile.xAxisLabelAngle)}
-                  onValueChange={(value) =>
-                    onUpdate(tile.id, { xAxisLabelAngle: Number(value) })
-                  }
+                  value={String(visuals.xAxisLabelAngle ?? 0)}
+                  onValueChange={(value) => updateVisuals({ xAxisLabelAngle: Number(value) })}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Select label angle" />
@@ -1045,12 +1100,8 @@ export function DefaultTileConfigurator({
                 <div className="space-y-2">
                   <Label>Orientation</Label>
                   <Select
-                    value={tile.orientation}
-                    onValueChange={(value) =>
-                      onUpdate(tile.id, {
-                        orientation: value as TileConfig["orientation"],
-                      })
-                    }
+                    value={String(visuals.orientation ?? "vertical")}
+                    onValueChange={(value) => updateVisuals({ orientation: value })}
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="Orientation" />
@@ -1069,10 +1120,8 @@ export function DefaultTileConfigurator({
                     min={1}
                     max={4}
                     step={0.5}
-                    value={[tile.lineWidth]}
-                    onValueChange={(value) =>
-                      onUpdate(tile.id, { lineWidth: value[0] })
-                    }
+                    value={[Number(visuals.lineWidth ?? 2)]}
+                    onValueChange={(value) => updateVisuals({ lineWidth: value[0] })}
                   />
                 </div>
               ) : null}
@@ -1080,12 +1129,8 @@ export function DefaultTileConfigurator({
                 <div className="space-y-2">
                   <Label>Line style</Label>
                   <Select
-                    value={tile.lineStyle}
-                    onValueChange={(value) =>
-                      onUpdate(tile.id, {
-                        lineStyle: value as TileConfig["lineStyle"],
-                      })
-                    }
+                    value={String(visuals.lineStyle ?? "solid")}
+                    onValueChange={(value) => updateVisuals({ lineStyle: value })}
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="Select line style" />
@@ -1102,17 +1147,15 @@ export function DefaultTileConfigurator({
                   <div className="flex items-center justify-between">
                     <Label>Bar radius</Label>
                     <span className="text-xs text-muted-foreground">
-                      {tile.barRadius}px
+                      {Number(visuals.barRadius ?? 0)}px
                     </span>
                   </div>
                   <Slider
                     min={0}
                     max={12}
                     step={1}
-                    value={[tile.barRadius]}
-                    onValueChange={(value) =>
-                      onUpdate(tile.id, { barRadius: value[0] })
-                    }
+                    value={[Number(visuals.barRadius ?? 0)]}
+                    onValueChange={(value) => updateVisuals({ barRadius: value[0] })}
                   />
                 </div>
               ) : null}
@@ -1121,17 +1164,15 @@ export function DefaultTileConfigurator({
                   <div className="flex items-center justify-between">
                     <Label>Bar gap</Label>
                     <span className="text-xs text-muted-foreground">
-                      {tile.barGap}%
+                      {Number(visuals.barGap ?? 0)}%
                     </span>
                   </div>
                   <Slider
                     min={0}
                     max={30}
                     step={2}
-                    value={[tile.barGap]}
-                    onValueChange={(value) =>
-                      onUpdate(tile.id, { barGap: value[0] })
-                    }
+                    value={[Number(visuals.barGap ?? 0)]}
+                    onValueChange={(value) => updateVisuals({ barGap: value[0] })}
                   />
                 </div>
               ) : null}
@@ -1145,10 +1186,8 @@ export function DefaultTileConfigurator({
                     <label className="flex items-center justify-between text-sm">
                       <span>Show gridlines</span>
                       <Switch
-                        checked={tile.showGrid}
-                        onCheckedChange={(value) =>
-                          onUpdate(tile.id, { showGrid: value })
-                        }
+                        checked={Boolean(visuals.showGrid)}
+                        onCheckedChange={(value) => updateVisuals({ showGrid: value })}
                       />
                     </label>
                   ) : null}
@@ -1156,10 +1195,8 @@ export function DefaultTileConfigurator({
                     <label className="flex items-center justify-between text-sm">
                       <span>Smooth curves</span>
                       <Switch
-                        checked={tile.smooth}
-                        onCheckedChange={(value) =>
-                          onUpdate(tile.id, { smooth: value })
-                        }
+                        checked={Boolean(visuals.smooth)}
+                        onCheckedChange={(value) => updateVisuals({ smooth: value })}
                       />
                     </label>
                   ) : null}
@@ -1167,10 +1204,8 @@ export function DefaultTileConfigurator({
                     <label className="flex items-center justify-between text-sm">
                       <span>Data points</span>
                       <Switch
-                        checked={tile.showPoints}
-                        onCheckedChange={(value) =>
-                          onUpdate(tile.id, { showPoints: value })
-                        }
+                        checked={Boolean(visuals.showPoints)}
+                        onCheckedChange={(value) => updateVisuals({ showPoints: value })}
                       />
                     </label>
                   ) : null}
@@ -1178,9 +1213,9 @@ export function DefaultTileConfigurator({
                     <label className="flex items-center justify-between text-sm">
                       <span>{comparisonLabel}</span>
                       <Switch
-                        checked={tile.showComparison}
+                        checked={Boolean(visuals.showComparison)}
                         onCheckedChange={(value) =>
-                          onUpdate(tile.id, { showComparison: value })
+                          updateVisuals({ showComparison: value })
                         }
                       />
                     </label>
@@ -1189,9 +1224,9 @@ export function DefaultTileConfigurator({
                     <label className="flex items-center justify-between text-sm">
                       <span>Data labels</span>
                       <Switch
-                        checked={tile.showDataLabels}
+                        checked={Boolean(visuals.showDataLabels)}
                         onCheckedChange={(value) =>
-                          onUpdate(tile.id, { showDataLabels: value })
+                          updateVisuals({ showDataLabels: value })
                         }
                       />
                     </label>
@@ -1213,16 +1248,12 @@ export function DefaultTileConfigurator({
                   Fine-tune the donut layout and labels.
                 </p>
               </div>
-              {visualOptions.donutLabelMode && tile.showDataLabels ? (
+              {visualOptions.donutLabelMode && visuals.showDataLabels ? (
                 <div className="space-y-2">
                   <Label>Label content</Label>
                   <Select
-                    value={tile.donutLabelMode}
-                    onValueChange={(value) =>
-                      onUpdate(tile.id, {
-                        donutLabelMode: value as TileConfig["donutLabelMode"],
-                      })
-                    }
+                    value={String(visuals.donutLabelMode ?? "name_percent")}
+                    onValueChange={(value) => updateVisuals({ donutLabelMode: value })}
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="Select label content" />
@@ -1236,15 +1267,13 @@ export function DefaultTileConfigurator({
                   </Select>
                 </div>
               ) : null}
-              {visualOptions.donutLabelPosition && tile.showDataLabels ? (
+              {visualOptions.donutLabelPosition && visuals.showDataLabels ? (
                 <div className="space-y-2">
                   <Label>Label position</Label>
                   <Select
-                    value={tile.donutLabelPosition}
+                    value={String(visuals.donutLabelPosition ?? "outside")}
                     onValueChange={(value) =>
-                      onUpdate(tile.id, {
-                        donutLabelPosition: value as TileConfig["donutLabelPosition"],
-                      })
+                      updateVisuals({ donutLabelPosition: value })
                     }
                   >
                     <SelectTrigger>
@@ -1262,16 +1291,16 @@ export function DefaultTileConfigurator({
                   <div className="flex items-center justify-between">
                     <Label>Donut hole</Label>
                     <span className="text-xs text-muted-foreground">
-                      {tile.donutInnerRadius}%
+                      {Number(visuals.donutInnerRadius ?? 0)}%
                     </span>
                   </div>
                   <Slider
                     min={35}
                     max={70}
                     step={5}
-                    value={[tile.donutInnerRadius]}
+                    value={[Number(visuals.donutInnerRadius ?? 0)]}
                     onValueChange={(value) =>
-                      onUpdate(tile.id, { donutInnerRadius: value[0] })
+                      updateVisuals({ donutInnerRadius: value[0] })
                     }
                   />
                 </div>
@@ -1281,16 +1310,16 @@ export function DefaultTileConfigurator({
                   <div className="flex items-center justify-between">
                     <Label>Donut size</Label>
                     <span className="text-xs text-muted-foreground">
-                      {tile.donutOuterRadius}%
+                      {Number(visuals.donutOuterRadius ?? 0)}%
                     </span>
                   </div>
                   <Slider
                     min={65}
                     max={95}
                     step={5}
-                    value={[tile.donutOuterRadius]}
+                    value={[Number(visuals.donutOuterRadius ?? 0)]}
                     onValueChange={(value) =>
-                      onUpdate(tile.id, { donutOuterRadius: value[0] })
+                      updateVisuals({ donutOuterRadius: value[0] })
                     }
                   />
                 </div>
@@ -1300,16 +1329,16 @@ export function DefaultTileConfigurator({
                   <div className="flex items-center justify-between">
                     <Label>Slice gap</Label>
                     <span className="text-xs text-muted-foreground">
-                      {tile.donutSlicePadding}px
+                      {Number(visuals.donutSlicePadding ?? 0)}px
                     </span>
                   </div>
                   <Slider
                     min={0}
                     max={8}
                     step={1}
-                    value={[tile.donutSlicePadding]}
+                    value={[Number(visuals.donutSlicePadding ?? 0)]}
                     onValueChange={(value) =>
-                      onUpdate(tile.id, { donutSlicePadding: value[0] })
+                      updateVisuals({ donutSlicePadding: value[0] })
                     }
                   />
                 </div>

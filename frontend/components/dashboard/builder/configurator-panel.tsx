@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import type { AvailabilityResponse, DimensionValueItem } from "../api"
 import { fetchAvailability, fetchDimensionValues } from "../api"
 import { DefaultTileConfigurator } from "../tiles/configurator/default"
+import type { TileConfiguratorComponent, TileDefinition } from "../tiles/types"
 import { getTileDefinition, getTileDefinitions } from "../tiles/registry"
 import type {
   DimensionDefinition,
@@ -31,10 +32,11 @@ export function ConfiguratorPanel({
   dimensions,
   series,
 }: ConfiguratorPanelProps) {
-  const tileDefinition = getTileDefinition(tile.vizType)
+  const tileDefinition = getTileDefinition(tile.vizType) as TileDefinition<TileConfig>
   const primaryMetricKey = tile.metricKeys[0] ?? ""
   const dataSource = tile.dataSource ?? tileDefinition.data.source
   const tileDefinitions = getTileDefinitions()
+  const visuals = tile.visuals as Record<string, unknown>
   const [activeTab, setActiveTab] = useState<"data" | "visuals">("data")
   const dimensionsByKey = useMemo(
     () => new Map(dimensions.map((dimension) => [dimension.key, dimension])),
@@ -382,11 +384,13 @@ export function ConfiguratorPanel({
       return
     }
     const disableComparison =
-      tile.showComparison &&
+      Boolean(visuals.showComparison) &&
       (!comparisonAllowed || next.length > 1 || tile.groupBy.length > 0)
     onUpdate(tile.id, {
       metricKeys: next,
-      ...(disableComparison ? { showComparison: false } : {}),
+      ...(disableComparison
+        ? { visuals: { showComparison: false } as TileConfig["visuals"] }
+        : {}),
     })
   }
 
@@ -399,29 +403,34 @@ export function ConfiguratorPanel({
     }
     const next = Array.from(selected)
     const disableComparison =
-      tile.showComparison &&
+      Boolean(visuals.showComparison) &&
       (!comparisonAllowed || tile.metricKeys.length > 1 || next.length > 0)
     onUpdate(tile.id, {
       groupBy: next,
-      ...(disableComparison ? { showComparison: false } : {}),
+      ...(disableComparison
+        ? { visuals: { showComparison: false } as TileConfig["visuals"] }
+        : {}),
     })
   }
 
   const updateSeriesColor = (seriesKey: string, color: string | null) => {
-    const nextColors = { ...tile.seriesColors }
+    const nextColors = {
+      ...(visuals.seriesColors as Record<string, string> | undefined),
+    }
     if (!color) {
       delete nextColors[seriesKey]
     } else {
       nextColors[seriesKey] = color
     }
-    onUpdate(tile.id, { seriesColors: nextColors })
+    onUpdate(tile.id, { visuals: { seriesColors: nextColors } as TileConfig["visuals"] })
   }
 
   const clearSeriesColors = () => {
-    onUpdate(tile.id, { seriesColors: {} })
+    onUpdate(tile.id, { visuals: { seriesColors: {} } as TileConfig["visuals"] })
   }
 
-  const ConfiguratorComponent = tileDefinition.configurator ?? DefaultTileConfigurator
+  const ConfiguratorComponent = (tileDefinition.configurator ??
+    DefaultTileConfigurator) as TileConfiguratorComponent<TileConfig>
 
   return (
     <ConfiguratorComponent
