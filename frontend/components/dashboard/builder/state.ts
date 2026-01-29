@@ -135,8 +135,10 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
   const draftInFlightRef = useRef(0)
   const metadataRef = useRef({ name: dashboardName, description: dashboardDescription })
   const initialDataRef = useRef(initialData)
+  const draftQueueRef = useRef<Map<string, Promise<void>>>(new Map())
   const layoutDebounceRef = useRef<number | null>(null)
   const pendingLayoutTilesRef = useRef<TileConfig[] | null>(null)
+  const metadataDebounceRef = useRef<number | null>(null)
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -180,6 +182,9 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
     return () => {
       if (layoutDebounceRef.current !== null) {
         clearTimeout(layoutDebounceRef.current)
+      }
+      if (metadataDebounceRef.current !== null) {
+        clearTimeout(metadataDebounceRef.current)
       }
     }
   }, [])
@@ -229,34 +234,141 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
     []
   )
 
+  const queueDraftChange = useCallback(
+    (dashboardId: string, action: () => Promise<void>) => {
+      const queue = draftQueueRef.current
+      const current = queue.get(dashboardId) ?? Promise.resolve()
+      const next = current.catch(() => undefined).then(action)
+      let tracked: Promise<void>
+      tracked = next.finally(() => {
+        if (queue.get(dashboardId) === tracked) {
+          queue.delete(dashboardId)
+        }
+      })
+      queue.set(dashboardId, tracked)
+      return tracked
+    },
+    []
+  )
+
+  const waitForDraftQueue = useCallback((dashboardId: string) => {
+    return draftQueueRef.current.get(dashboardId) ?? Promise.resolve()
+  }, [])
+
   const persistDraftChange = useCallback(
-    async (dashboardId: string, action: () => Promise<void>) => {
+    (dashboardId: string, action: () => Promise<void>) => {
       if (!dashboardId) {
-        return
+        return Promise.resolve()
       }
       setDraftError(null)
       draftInFlightRef.current += 1
       setDraftStatus("saving")
-      try {
-        await action()
-        if (activeDashboardIdRef.current === dashboardId) {
-          setHasDraft(true)
-        }
-      } catch (error) {
-        if (activeDashboardIdRef.current !== dashboardId) {
-          return
-        }
-        const message =
-          error instanceof Error ? error.message : "Failed to save draft."
-        setDraftError(message)
-      } finally {
-        draftInFlightRef.current = Math.max(0, draftInFlightRef.current - 1)
-        if (activeDashboardIdRef.current === dashboardId) {
-          setDraftStatus(draftInFlightRef.current > 0 ? "saving" : "idle")
+      const run = async () => {
+        try {
+          await action()
+          if (activeDashboardIdRef.current === dashboardId) {
+            setHasDraft(true)
+          }
+        } catch (error) {
+          if (activeDashboardIdRef.current !== dashboardId) {
+            return
+          }
+          const message =
+            error instanceof Error ? error.message : "Failed to save draft."
+          setDraftError(message)
+        } finally {
+          draftInFlightRef.current = Math.max(0, draftInFlightRef.current - 1)
+          if (activeDashboardIdRef.current === dashboardId) {
+            setDraftStatus(draftInFlightRef.current > 0 ? "saving" : "idle")
+          }
         }
       }
+      return queueDraftChange(dashboardId, run)
     },
-    []
+    [queueDraftChange]
+  )
+
+  const persistLayout = useCallback(
+    (dashboardId: string, nextTiles: TileConfig[]) => {
+      return persistDraftChange(dashboardId, async () => {
+        await updateDraftLayout(dashboardApiBaseUrl, dashboardId, {
+          items: nextTiles.map((tile) => ({ id: tile.id, layout: tile.layout })),
+        })
+      })
+    },
+    [dashboardApiBaseUrl, persistDraftChange]
+  )
+
+  const cancelPendingLayoutPersist = useCallback(() => {
+    if (layoutDebounceRef.current !== null) {
+      clearTimeout(layoutDebounceRef.current)
+      layoutDebounceRef.current = null
+    }
+    pendingLayoutTilesRef.current = null
+  }, [])
+
+  const flushPendingLayoutPersist = useCallback(
+    async (dashboardId: string) => {
+      if (!dashboardId) {
+        return
+      }
+      if (layoutDebounceRef.current !== null) {
+        clearTimeout(layoutDebounceRef.current)
+        layoutDebounceRef.current = null
+      }
+      const pending = pendingLayoutTilesRef.current
+      pendingLayoutTilesRef.current = null
+      if (!pending) {
+        return
+      }
+      await persistLayout(dashboardId, pending)
+    },
+    [persistLayout]
+  )
+
+  const cancelPendingMetadataPersist = useCallback(() => {
+    if (metadataDebounceRef.current !== null) {
+      clearTimeout(metadataDebounceRef.current)
+      metadataDebounceRef.current = null
+    }
+  }, [])
+
+  const flushPendingMetadataPersist = useCallback(
+    async (dashboardId: string) => {
+      if (!dashboardId) {
+        return
+      }
+      cancelPendingMetadataPersist()
+      const trimmedName = dashboardName.trim()
+      if (!trimmedName) {
+        return
+      }
+      const normalizedDescription = dashboardDescription.trim()
+      const lastSaved = metadataRef.current
+      if (
+        trimmedName === lastSaved.name &&
+        normalizedDescription === lastSaved.description
+      ) {
+        return
+      }
+      await persistDraftChange(dashboardId, async () => {
+        await updateDraftMetadata(dashboardApiBaseUrl, dashboardId, {
+          name: trimmedName,
+          description: normalizedDescription || null,
+        })
+        metadataRef.current = {
+          name: trimmedName,
+          description: normalizedDescription,
+        }
+      })
+    },
+    [
+      cancelPendingMetadataPersist,
+      dashboardApiBaseUrl,
+      dashboardDescription,
+      dashboardName,
+      persistDraftChange,
+    ]
   )
 
   const scheduleLayoutPersist = useCallback(
@@ -266,19 +378,16 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
         clearTimeout(layoutDebounceRef.current)
       }
       layoutDebounceRef.current = window.setTimeout(() => {
+        layoutDebounceRef.current = null
         const pending = pendingLayoutTilesRef.current
         if (!pending) {
           return
         }
-        void persistDraftChange(dashboardId, async () => {
-          await updateDraftLayout(dashboardApiBaseUrl, dashboardId, {
-            items: pending.map((tile) => ({ id: tile.id, layout: tile.layout })),
-          })
-        })
+        void persistLayout(dashboardId, pending)
         pendingLayoutTilesRef.current = null
       }, 350)
     },
-    [dashboardApiBaseUrl, persistDraftChange]
+    [persistLayout]
   )
 
   const loadDashboard = useCallback(
@@ -501,7 +610,11 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
       return
     }
     const dashboardId = activeDashboardId
-    const timeout = setTimeout(() => {
+    if (metadataDebounceRef.current !== null) {
+      clearTimeout(metadataDebounceRef.current)
+    }
+    metadataDebounceRef.current = window.setTimeout(() => {
+      metadataDebounceRef.current = null
       void persistDraftChange(dashboardId, async () => {
         await updateDraftMetadata(dashboardApiBaseUrl, dashboardId, {
           name: trimmedName,
@@ -513,7 +626,12 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
         }
       })
     }, 400)
-    return () => clearTimeout(timeout)
+    return () => {
+      if (metadataDebounceRef.current !== null) {
+        clearTimeout(metadataDebounceRef.current)
+        metadataDebounceRef.current = null
+      }
+    }
   }, [
     activeDashboardId,
     dashboardApiBaseUrl,
@@ -694,36 +812,28 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
   const commitLayout = (layout: Layout) => {
     const cols = resolveLayoutCols(activeBreakpoint)
     const layoutById = new Map(layout.map((item) => [item.i, item]))
-    const tileById = new Map(tilesRef.current.map((tile) => [tile.id, tile]))
-    const orderedIds = [...layout]
-      .sort((a, b) => a.y - b.y || a.x - b.x)
-      .map((item) => item.i)
-    const orderedTiles = orderedIds
-      .map((id) => {
-        const tile = tileById.get(id)
-        const item = layoutById.get(id)
-        if (!tile || !item) {
-          return tile ?? null
-        }
-        return {
+    const nextTiles = tilesRef.current.map((tile) => {
+      const item = layoutById.get(tile.id)
+      if (!item) {
+        return tile
+      }
+      const sized = applyMinSize(
+        {
           ...tile,
-          layout: { ...tile.layout, w: item.w, h: item.h },
-        }
-      })
-      .filter((tile): tile is TileConfig => Boolean(tile))
-    const remainingTiles = tilesRef.current
-      .filter((tile) => !layoutById.has(tile.id))
-      .map((tile) => {
-        const item = layoutById.get(tile.id)
-        if (!item) {
-          return tile
-        }
-        return {
-          ...tile,
-          layout: { ...tile.layout, w: item.w, h: item.h },
-        }
-      })
-    const nextTiles = packTiles([...orderedTiles, ...remainingTiles], cols)
+          layout: { ...tile.layout, x: item.x, y: item.y, w: item.w, h: item.h },
+        },
+        cols
+      )
+      const maxX = Math.max(0, cols - sized.layout.w)
+      return {
+        ...sized,
+        layout: {
+          ...sized.layout,
+          x: Math.min(Math.max(0, sized.layout.x), maxX),
+          y: Math.max(0, sized.layout.y),
+        },
+      }
+    })
     setTiles(nextTiles)
     const dashboardId = activeDashboardIdRef.current
     if (dashboardId) {
@@ -814,6 +924,9 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
     setDashboardStatus("saving")
     setDashboardError(null)
     try {
+      await flushPendingMetadataPersist(activeDashboardId)
+      await flushPendingLayoutPersist(activeDashboardId)
+      await waitForDraftQueue(activeDashboardId)
       const response = await commitDraft(dashboardApiBaseUrl, activeDashboardId)
       applyDashboardMetadata(response.name, response.description)
       setHasDraft(false)
@@ -857,6 +970,9 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
     setDraftError(null)
     setConfiguratorOpen(false)
     try {
+      cancelPendingMetadataPersist()
+      cancelPendingLayoutPersist()
+      await waitForDraftQueue(activeDashboardId)
       await deleteDraft(dashboardApiBaseUrl, activeDashboardId)
       await loadDashboard(activeDashboardId)
     } catch (error) {
