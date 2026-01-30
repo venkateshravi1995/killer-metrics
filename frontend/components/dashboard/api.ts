@@ -488,8 +488,9 @@ export async function updateDraftLayout(
     items: Array<{ id: string; layout: TileConfig["layout"] }>
   }
 ) {
-  const url = buildDashboardDraftUrl(baseUrl, dashboardId, "/layout")
-  return fetchNoContent(url, {
+  const url = new URL(buildDashboardDraftUrl(baseUrl, dashboardId, "/layout"))
+  url.searchParams.set("allow_missing", "true")
+  return fetchNoContent(url.toString(), {
     method: "PUT",
     headers: buildDashboardHeaders(true),
     body: JSON.stringify(payload),

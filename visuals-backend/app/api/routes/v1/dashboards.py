@@ -586,6 +586,8 @@ async def update_draft_layout(
     dashboard_id: str,
     payload: TileLayoutUpdate,
     context: Annotated[RequestContext, Depends(get_request_context)],
+    *,
+    allow_missing: bool = False,
 ) -> Response:
     """Update tile layouts within a draft dashboard."""
     async with context.session.begin():
@@ -630,19 +632,24 @@ async def update_draft_layout(
         )
         rows = {row.tile_id: row for row in result.scalars().all()}
         missing = [tile_id for tile_id in tile_ids if tile_id not in rows]
-        if missing:
+        if missing and not allow_missing:
             raise HTTPException(
                 status_code=404,
                 detail=f"Tiles not found: {', '.join(missing)}",
             )
         now_expr = _db_now()
+        updated = False
         for item in payload.items:
-            tile = rows[item.id]
+            tile = rows.get(item.id)
+            if tile is None:
+                continue
             config = dict(tile.config)
             config["layout"] = item.layout
             tile.config = config
             tile.updated_at = now_expr
-        draft.updated_at = now_expr
+            updated = True
+        if updated:
+            draft.updated_at = now_expr
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
