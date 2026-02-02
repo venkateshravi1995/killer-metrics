@@ -1,6 +1,6 @@
 import { getNeonAuthToken } from "@/lib/neon-auth-token"
 
-import type { DashboardConfig, Filter, TileConfig } from "./types"
+import type { DashboardBreakpoint, DashboardConfig, Filter, TileConfig } from "./types"
 
 export type TimeseriesResponse = {
   metric_keys: string[]
@@ -139,6 +139,27 @@ function buildDimensionPairs(filters: Filter[]) {
         .filter((valueId) => Number.isFinite(valueId))
         .map((valueId) => `${filter.dimensionId}:${valueId}`)
     )
+}
+
+const isSameLayout = (left: TileConfig["layout"], right: TileConfig["layout"]) =>
+  left.x === right.x && left.y === right.y && left.w === right.w && left.h === right.h
+
+function normalizeTileForSave(tile: TileConfig): TileConfig {
+  const lgLayout = tile.layouts?.lg
+  if (!lgLayout || isSameLayout(tile.layout, lgLayout)) {
+    return tile
+  }
+  return { ...tile, layout: lgLayout }
+}
+
+function normalizeDashboardConfig(config: DashboardConfig): DashboardConfig {
+  if (!config.tiles.length) {
+    return config
+  }
+  return {
+    ...config,
+    tiles: config.tiles.map((tile) => normalizeTileForSave(tile)),
+  }
 }
 
 async function fetchJson<T>(input: string, init?: RequestInit) {
@@ -405,11 +426,15 @@ export async function createDashboard(
     config: DashboardConfig
   }
 ) {
+  const normalizedPayload = {
+    ...payload,
+    config: normalizeDashboardConfig(payload.config),
+  }
   const url = buildDashboardsUrl(baseUrl)
   return fetchJson<DashboardResponse>(url, {
     method: "POST",
     headers: buildDashboardHeaders(true),
-    body: JSON.stringify(payload),
+    body: JSON.stringify(normalizedPayload),
   })
 }
 
@@ -422,11 +447,15 @@ export async function updateDashboard(
     config: DashboardConfig
   }
 ) {
+  const normalizedPayload = {
+    ...payload,
+    config: normalizeDashboardConfig(payload.config),
+  }
   const url = buildDashboardUrl(baseUrl, dashboardId)
   return fetchJson<DashboardResponse>(url, {
     method: "PUT",
     headers: buildDashboardHeaders(true),
-    body: JSON.stringify(payload),
+    body: JSON.stringify(normalizedPayload),
   })
 }
 
@@ -451,7 +480,7 @@ export async function createDraftTile(
   return fetchNoContent(url, {
     method: "POST",
     headers: buildDashboardHeaders(true),
-    body: JSON.stringify(tile),
+    body: JSON.stringify(normalizeTileForSave(tile)),
   })
 }
 
@@ -465,7 +494,7 @@ export async function updateDraftTile(
   return fetchNoContent(url, {
     method: "PUT",
     headers: buildDashboardHeaders(true),
-    body: JSON.stringify(tile),
+    body: JSON.stringify(normalizeTileForSave(tile)),
   })
 }
 
@@ -485,15 +514,20 @@ export async function updateDraftLayout(
   baseUrl: string,
   dashboardId: string,
   payload: {
+    breakpoint: DashboardBreakpoint
     items: Array<{ id: string; layout: TileConfig["layout"] }>
   }
 ) {
   const url = new URL(buildDashboardDraftUrl(baseUrl, dashboardId, "/layout"))
   url.searchParams.set("allow_missing", "true")
+  const items = payload.items.map((item) => ({
+    ...item,
+    breakpoint: payload.breakpoint,
+  }))
   return fetchNoContent(url.toString(), {
     method: "PUT",
     headers: buildDashboardHeaders(true),
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ items }),
   })
 }
 

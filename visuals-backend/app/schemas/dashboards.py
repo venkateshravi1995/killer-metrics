@@ -72,6 +72,7 @@ class TileLayoutPatch(BaseModel):
 
     id: str
     layout: dict[str, int]
+    breakpoint: str | None = None
 
 
 class TileLayoutUpdate(BaseModel):

@@ -89,6 +89,31 @@ def _tiles_from_rows(rows: list[DashboardTile]) -> list[dict[str, Any]]:
     return [row.config for row in rows]
 
 
+def _apply_layout_update(
+    config: dict[str, Any],
+    layout: dict[str, int],
+    layout_breakpoint: str | None,
+) -> dict[str, Any]:
+    updated = dict(config)
+    if layout_breakpoint:
+        layouts = updated.get("layouts")
+        if not isinstance(layouts, dict):
+            layouts = {}
+        layouts[layout_breakpoint] = layout
+        updated["layouts"] = layouts
+        if layout_breakpoint == "lg":
+            updated["layout"] = layout
+        return updated
+    updated["layout"] = layout
+    layouts = updated.get("layouts")
+    if isinstance(layouts, dict):
+        layouts.setdefault("lg", layout)
+        updated["layouts"] = layouts
+        return updated
+    updated["layouts"] = {"lg": layout}
+    return updated
+
+
 def _item_to_dashboard(
     item: Dashboard,
     *,
@@ -684,9 +709,12 @@ async def update_draft_layout(
             tile = rows.get(item.id)
             if tile is None:
                 continue
-            config = dict(tile.config)
-            config["layout"] = item.layout
-            tile.config = config
+            layout_breakpoint = (item.breakpoint or "").strip() or None
+            tile.config = _apply_layout_update(
+                dict(tile.config),
+                item.layout,
+                layout_breakpoint,
+            )
             tile.updated_at = now_expr
             updated = True
         if updated:

@@ -36,6 +36,8 @@ export type TileLayout = {
   h: number
 }
 
+export type DashboardBreakpoint = "lg" | "md" | "sm" | "xs" | "xxs"
+
 export type MetricDefinition = {
   key: MetricKey
   label: string
