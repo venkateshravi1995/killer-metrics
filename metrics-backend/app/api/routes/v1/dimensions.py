@@ -8,6 +8,14 @@ from sqlalchemy import func, literal, literal_column, or_, select
 from sqlalchemy.sql.elements import ColumnElement
 from sqlalchemy.sql.selectable import Select
 
+from app.api.cache import (
+    CATALOG_TTL_SECONDS,
+    QUERY_TTL_SECONDS,
+    SEARCH_TTL_SECONDS,
+    build_cache_key,
+    cached_json,
+    get_metrics_cache_version,
+)
 from app.api.routes.v1.utils import set_cache_control
 from app.api.schemas.dimensions import (
     DimensionSearchFilters,
@@ -155,13 +163,27 @@ async def list_dimensions(
 ) -> dict:
     """List available dimensions."""
     set_cache_control(response)
-    stmt = select(DimensionDefinition).order_by(DimensionDefinition.dimension_key)
-    if is_active is not None:
-        stmt = stmt.where(DimensionDefinition.is_active == is_active)
-    stmt = apply_pagination(stmt, limit, offset)
-    result = await connection.execute(stmt)
-    rows = result.scalars().all()
-    return {"items": [row.to_dict() for row in rows], "limit": limit, "offset": offset}
+    cache_version = await get_metrics_cache_version()
+    cache_key = build_cache_key(
+        "dimensions:list",
+        {
+            "version": cache_version,
+            "is_active": is_active,
+            "limit": limit,
+            "offset": offset,
+        },
+    )
+
+    async def _compute() -> dict:
+        stmt = select(DimensionDefinition).order_by(DimensionDefinition.dimension_key)
+        if is_active is not None:
+            stmt = stmt.where(DimensionDefinition.is_active == is_active)
+        stmt = apply_pagination(stmt, limit, offset)
+        result = await connection.execute(stmt)
+        rows = result.scalars().all()
+        return {"items": [row.to_dict() for row in rows], "limit": limit, "offset": offset}
+
+    return await cached_json(cache_key, CATALOG_TTL_SECONDS, _compute, response)
 
 
 @router.get("/{dimension_key}")
@@ -172,12 +194,23 @@ async def get_dimension(
 ) -> dict:
     """Fetch a single dimension by key."""
     set_cache_control(response)
-    stmt = select(DimensionDefinition).where(DimensionDefinition.dimension_key == dimension_key)
-    result = await connection.execute(stmt)
-    row = result.scalar_one_or_none()
-    if row is None:
-        raise HTTPException(status_code=404, detail="dimension_key not found")
-    return row.to_dict()
+    cache_version = await get_metrics_cache_version()
+    cache_key = build_cache_key(
+        "dimensions:get",
+        {"version": cache_version, "dimension_key": dimension_key},
+    )
+
+    async def _compute() -> dict:
+        stmt = select(DimensionDefinition).where(
+            DimensionDefinition.dimension_key == dimension_key,
+        )
+        result = await connection.execute(stmt)
+        row = result.scalar_one_or_none()
+        if row is None:
+            raise HTTPException(status_code=404, detail="dimension_key not found")
+        return row.to_dict()
+
+    return await cached_json(cache_key, CATALOG_TTL_SECONDS, _compute, response)
 
 
 @router.get("/{dimension_key}/values")
@@ -189,48 +222,57 @@ async def get_dimension_values(
 ) -> dict:
     """List dimension values, optionally scoped by metric and time range."""
     set_cache_control(response)
-    dimension_ids = await resolve_dimension_ids(connection, [dimension_key])
-    dimension_id = dimension_ids[dimension_key]
+    cache_version = await get_metrics_cache_version()
+    cache_key = build_cache_key(
+        "dimensions:values",
+        {"version": cache_version, "dimension_key": dimension_key, "filters": filters},
+    )
 
-    stmt = select(DimensionValue.value.label("dimension_value")).distinct()
-    stmt = stmt.where(DimensionValue.dimension_id == dimension_id)
+    async def _compute() -> dict:
+        dimension_ids = await resolve_dimension_ids(connection, [dimension_key])
+        dimension_id = dimension_ids[dimension_key]
 
-    if filters.metric_key or filters.start_time or filters.end_time:
-        stmt = (
-            stmt.join(
-                DimensionSetValue,
-                DimensionSetValue.value_id == DimensionValue.value_id,
+        stmt = select(DimensionValue.value.label("dimension_value")).distinct()
+        stmt = stmt.where(DimensionValue.dimension_id == dimension_id)
+
+        if filters.metric_key or filters.start_time or filters.end_time:
+            stmt = (
+                stmt.join(
+                    DimensionSetValue,
+                    DimensionSetValue.value_id == DimensionValue.value_id,
+                )
+                .join(
+                    MetricSeries,
+                    MetricSeries.set_id == DimensionSetValue.set_id,
+                )
+                .join(
+                    MetricObservation,
+                    MetricObservation.series_id == MetricSeries.series_id,
+                )
             )
-            .join(
-                MetricSeries,
-                MetricSeries.set_id == DimensionSetValue.set_id,
-            )
-            .join(
-                MetricObservation,
-                MetricObservation.series_id == MetricSeries.series_id,
-            )
-        )
 
-    if filters.metric_key:
-        metric_id = await resolve_metric_id(connection, filters.metric_key)
-        stmt = stmt.where(MetricSeries.metric_id == metric_id)
+        if filters.metric_key:
+            metric_id = await resolve_metric_id(connection, filters.metric_key)
+            stmt = stmt.where(MetricSeries.metric_id == metric_id)
 
-    if filters.start_time:
-        stmt = stmt.where(MetricObservation.time_start_ts >= filters.start_time)
-    if filters.end_time:
-        stmt = stmt.where(MetricObservation.time_start_ts < filters.end_time)
+        if filters.start_time:
+            stmt = stmt.where(MetricObservation.time_start_ts >= filters.start_time)
+        if filters.end_time:
+            stmt = stmt.where(MetricObservation.time_start_ts < filters.end_time)
 
-    stmt = stmt.order_by(DimensionValue.value)
-    stmt = apply_pagination(stmt, filters.limit, filters.offset)
+        stmt = stmt.order_by(DimensionValue.value)
+        stmt = apply_pagination(stmt, filters.limit, filters.offset)
 
-    result = await connection.execute(stmt)
-    rows = result.scalars().all()
-    return {
-        "dimension_key": dimension_key,
-        "items": rows,
-        "limit": filters.limit,
-        "offset": filters.offset,
-    }
+        result = await connection.execute(stmt)
+        rows = result.scalars().all()
+        return {
+            "dimension_key": dimension_key,
+            "items": rows,
+            "limit": filters.limit,
+            "offset": filters.offset,
+        }
+
+    return await cached_json(cache_key, QUERY_TTL_SECONDS, _compute, response)
 
 
 @router.post("/search")
@@ -241,22 +283,31 @@ async def search_dimensions(
 ) -> dict:
     """Search dimension definitions with full-text and trigram matching."""
     set_cache_control(response)
-    stmt = select(DimensionDefinition)
-    stmt = _apply_dimension_filters(stmt, payload.filters)
-    stmt = _apply_dimension_search_query(
-        stmt,
-        payload.q or "",
-        payload.search_fields,
-        payload.similarity,
+    cache_version = await get_metrics_cache_version()
+    cache_key = build_cache_key(
+        "dimensions:search",
+        {"version": cache_version, "payload": payload},
     )
-    stmt = apply_pagination(stmt, payload.limit, payload.offset)
-    result = await connection.execute(stmt)
-    rows = result.scalars().all()
-    return {
-        "items": [row.to_dict() for row in rows],
-        "limit": payload.limit,
-        "offset": payload.offset,
-    }
+
+    async def _compute() -> dict:
+        stmt = select(DimensionDefinition)
+        stmt = _apply_dimension_filters(stmt, payload.filters)
+        stmt = _apply_dimension_search_query(
+            stmt,
+            payload.q or "",
+            payload.search_fields,
+            payload.similarity,
+        )
+        stmt = apply_pagination(stmt, payload.limit, payload.offset)
+        result = await connection.execute(stmt)
+        rows = result.scalars().all()
+        return {
+            "items": [row.to_dict() for row in rows],
+            "limit": payload.limit,
+            "offset": payload.offset,
+        }
+
+    return await cached_json(cache_key, SEARCH_TTL_SECONDS, _compute, response)
 
 
 @router.post("/values/search")
@@ -267,65 +318,77 @@ async def search_dimension_values(
 ) -> dict:
     """Search dimension values with optional metric/time scoping."""
     set_cache_control(response)
-    stmt = select(
-        DimensionValue.value_id,
-        DimensionValue.value,
-        DimensionDefinition.dimension_key,
-    ).join(
-        DimensionDefinition,
-        DimensionDefinition.dimension_id == DimensionValue.dimension_id,
+    cache_version = await get_metrics_cache_version()
+    cache_key = build_cache_key(
+        "dimensions:values:search",
+        {"version": cache_version, "payload": payload},
     )
 
-    if payload.filters.dimension_key:
-        dimension_ids = await resolve_dimension_ids(connection, payload.filters.dimension_key)
-        stmt = stmt.where(DimensionValue.dimension_id.in_(dimension_ids.values()))
-
-    if payload.filters.metric_key or payload.filters.start_time or payload.filters.end_time:
-        stmt = (
-            stmt.join(
-                DimensionSetValue,
-                DimensionSetValue.value_id == DimensionValue.value_id,
-            )
-            .join(
-                MetricSeries,
-                MetricSeries.set_id == DimensionSetValue.set_id,
-            )
-            .join(
-                MetricObservation,
-                MetricObservation.series_id == MetricSeries.series_id,
-            )
+    async def _compute() -> dict:
+        stmt = select(
+            DimensionValue.value_id,
+            DimensionValue.value,
+            DimensionDefinition.dimension_key,
+        ).join(
+            DimensionDefinition,
+            DimensionDefinition.dimension_id == DimensionValue.dimension_id,
         )
 
-    if payload.filters.metric_key:
-        metric_id = await resolve_metric_id(connection, payload.filters.metric_key)
-        stmt = stmt.where(MetricSeries.metric_id == metric_id)
+        if payload.filters.dimension_key:
+            dimension_ids = await resolve_dimension_ids(
+                connection,
+                payload.filters.dimension_key,
+            )
+            stmt = stmt.where(DimensionValue.dimension_id.in_(dimension_ids.values()))
 
-    if payload.filters.start_time:
-        stmt = stmt.where(MetricObservation.time_start_ts >= payload.filters.start_time)
-    if payload.filters.end_time:
-        stmt = stmt.where(MetricObservation.time_start_ts < payload.filters.end_time)
+        if payload.filters.metric_key or payload.filters.start_time or payload.filters.end_time:
+            stmt = (
+                stmt.join(
+                    DimensionSetValue,
+                    DimensionSetValue.value_id == DimensionValue.value_id,
+                )
+                .join(
+                    MetricSeries,
+                    MetricSeries.set_id == DimensionSetValue.set_id,
+                )
+                .join(
+                    MetricObservation,
+                    MetricObservation.series_id == MetricSeries.series_id,
+                )
+            )
 
-    stmt = stmt.distinct()
-    stmt, score = _apply_dimension_value_search_query(
-        stmt,
-        payload.q or "",
-        payload.similarity,
-    )
-    if score is not None:
-        stmt = stmt.add_columns(score.label("search_score"))
-    stmt = apply_pagination(stmt, payload.limit, payload.offset)
+        if payload.filters.metric_key:
+            metric_id = await resolve_metric_id(connection, payload.filters.metric_key)
+            stmt = stmt.where(MetricSeries.metric_id == metric_id)
 
-    result = await connection.execute(stmt)
-    rows = result.mappings().all()
-    return {
-        "items": [
-            {
-                "dimension_key": row["dimension_key"],
-                "value_id": int(row["value_id"]),
-                "value": row["value"],
-            }
-            for row in rows
-        ],
-        "limit": payload.limit,
-        "offset": payload.offset,
-    }
+        if payload.filters.start_time:
+            stmt = stmt.where(MetricObservation.time_start_ts >= payload.filters.start_time)
+        if payload.filters.end_time:
+            stmt = stmt.where(MetricObservation.time_start_ts < payload.filters.end_time)
+
+        stmt = stmt.distinct()
+        stmt, score = _apply_dimension_value_search_query(
+            stmt,
+            payload.q or "",
+            payload.similarity,
+        )
+        if score is not None:
+            stmt = stmt.add_columns(score.label("search_score"))
+        stmt = apply_pagination(stmt, payload.limit, payload.offset)
+
+        result = await connection.execute(stmt)
+        rows = result.mappings().all()
+        return {
+            "items": [
+                {
+                    "dimension_key": row["dimension_key"],
+                    "value_id": int(row["value_id"]),
+                    "value": row["value"],
+                }
+                for row in rows
+            ],
+            "limit": payload.limit,
+            "offset": payload.offset,
+        }
+
+    return await cached_json(cache_key, SEARCH_TTL_SECONDS, _compute, response)

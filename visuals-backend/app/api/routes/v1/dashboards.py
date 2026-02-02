@@ -14,6 +14,13 @@ from typing import TYPE_CHECKING, Annotated, Any, cast
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import and_, delete, func, or_, select
 
+from app.api.cache import (
+    DASHBOARD_TTL_SECONDS,
+    build_cache_key,
+    bump_dashboard_cache_version,
+    cached_json,
+    get_dashboard_cache_version,
+)
 from app.core.auth import AuthContext, require_neon_auth
 from app.db.schema import Dashboard, DashboardTile
 from app.db.session import get_session
@@ -251,6 +258,7 @@ async def create_dashboard(
             ]
             context.session.add_all(tile_rows)
     await context.session.refresh(dashboard)
+    await bump_dashboard_cache_version(context.client_id, context.user_id)
     return _item_to_dashboard(dashboard, tiles=tiles)
 
 
@@ -261,52 +269,67 @@ async def list_dashboards(
     cursor: Annotated[str | None, Query()] = None,
 ) -> DashboardList:
     """List published dashboards with cursor pagination."""
-    cursor_value = _decode_cursor(cursor)
-    stmt = (
-        select(Dashboard)
-        .where(
-            Dashboard.client_id == context.client_id,
-            Dashboard.is_draft.is_(False),
-            Dashboard.user_id == context.user_id,
-        )
-        .order_by(Dashboard.updated_at.desc(), Dashboard.id.desc())
-        .limit(limit + 1)
+    cache_version = await get_dashboard_cache_version(context.client_id, context.user_id)
+    cache_key = build_cache_key(
+        "dashboards:list",
+        {
+            "version": cache_version,
+            "client_id": context.client_id,
+            "user_id": context.user_id,
+            "limit": limit,
+            "cursor": cursor,
+        },
     )
-    if cursor_value:
-        try:
-            raw_updated = str(cursor_value["updated_at"])
-            if raw_updated.endswith("Z"):
-                raw_updated = raw_updated.removesuffix("Z") + "+00:00"
-            cursor_updated = datetime.fromisoformat(raw_updated)
-            cursor_id = str(cursor_value["id"])
-        except (KeyError, ValueError) as exc:
-            raise HTTPException(status_code=400, detail="Invalid cursor.") from exc
-        stmt = stmt.where(
-            or_(
-                Dashboard.updated_at < cursor_updated,
-                and_(
-                    Dashboard.updated_at == cursor_updated,
-                    Dashboard.id < cursor_id,
+
+    async def _compute() -> DashboardList:
+        cursor_value = _decode_cursor(cursor)
+        stmt = (
+            select(Dashboard)
+            .where(
+                Dashboard.client_id == context.client_id,
+                Dashboard.is_draft.is_(False),
+                Dashboard.user_id == context.user_id,
+            )
+            .order_by(Dashboard.updated_at.desc(), Dashboard.id.desc())
+            .limit(limit + 1)
+        )
+        if cursor_value:
+            try:
+                raw_updated = str(cursor_value["updated_at"])
+                if raw_updated.endswith("Z"):
+                    raw_updated = raw_updated.removesuffix("Z") + "+00:00"
+                cursor_updated = datetime.fromisoformat(raw_updated)
+                cursor_id = str(cursor_value["id"])
+            except (KeyError, ValueError) as exc:
+                raise HTTPException(status_code=400, detail="Invalid cursor.") from exc
+            stmt = stmt.where(
+                or_(
+                    Dashboard.updated_at < cursor_updated,
+                    and_(
+                        Dashboard.updated_at == cursor_updated,
+                        Dashboard.id < cursor_id,
+                    ),
                 ),
-            ),
+            )
+        result = await context.session.execute(stmt)
+        items = list(result.scalars().all())
+        next_cursor = None
+        if len(items) > limit:
+            items.pop()
+            last = items[-1]
+            next_cursor = _encode_cursor(
+                {
+                    "updated_at": last.updated_at.isoformat(),
+                    "id": last.id,
+                },
+            )
+        return DashboardList(
+            items=[_item_to_summary(item) for item in items],
+            limit=limit,
+            next_cursor=next_cursor,
         )
-    result = await context.session.execute(stmt)
-    items = list(result.scalars().all())
-    next_cursor = None
-    if len(items) > limit:
-        items.pop()
-        last = items[-1]
-        next_cursor = _encode_cursor(
-            {
-                "updated_at": last.updated_at.isoformat(),
-                "id": last.id,
-            },
-        )
-    return DashboardList(
-        items=[_item_to_summary(item) for item in items],
-        limit=limit,
-        next_cursor=next_cursor,
-    )
+
+    return await cached_json(cache_key, DASHBOARD_TTL_SECONDS, _compute)
 
 
 @router.get("/{dashboard_id}", response_model=DashboardOut)
@@ -315,42 +338,56 @@ async def get_dashboard(
     context: Annotated[RequestContext, Depends(get_request_context)],
 ) -> DashboardOut:
     """Fetch a published dashboard or user draft."""
-    published = await _get_published_dashboard(
-        context.session,
-        dashboard_id,
-        context.user_id,
-        context.client_id,
+    cache_version = await get_dashboard_cache_version(context.client_id, context.user_id)
+    cache_key = build_cache_key(
+        "dashboards:get",
+        {
+            "version": cache_version,
+            "client_id": context.client_id,
+            "user_id": context.user_id,
+            "dashboard_id": dashboard_id,
+        },
     )
-    draft = await _get_draft_dashboard(
-        context.session,
-        dashboard_id,
-        context.user_id,
-        context.client_id,
-    )
-    if draft:
-        draft_tiles = await _fetch_tiles(
+
+    async def _compute() -> DashboardOut:
+        published = await _get_published_dashboard(
+            context.session,
+            dashboard_id,
+            context.user_id,
+            context.client_id,
+        )
+        draft = await _get_draft_dashboard(
+            context.session,
+            dashboard_id,
+            context.user_id,
+            context.client_id,
+        )
+        if draft:
+            draft_tiles = await _fetch_tiles(
+                context.session,
+                [
+                    DashboardTile.dashboard_id == dashboard_id,
+                    DashboardTile.user_id == context.user_id,
+                    DashboardTile.is_draft.is_(True),
+                ],
+            )
+            return _item_to_dashboard(
+                draft,
+                tiles=_tiles_from_rows(draft_tiles),
+                created_at_override=published.created_at,
+                is_draft=True,
+            )
+        published_tiles = await _fetch_tiles(
             context.session,
             [
                 DashboardTile.dashboard_id == dashboard_id,
                 DashboardTile.user_id == context.user_id,
-                DashboardTile.is_draft.is_(True),
+                DashboardTile.is_draft.is_(False),
             ],
         )
-        return _item_to_dashboard(
-            draft,
-            tiles=_tiles_from_rows(draft_tiles),
-            created_at_override=published.created_at,
-            is_draft=True,
-        )
-    published_tiles = await _fetch_tiles(
-        context.session,
-        [
-            DashboardTile.dashboard_id == dashboard_id,
-            DashboardTile.user_id == context.user_id,
-            DashboardTile.is_draft.is_(False),
-        ],
-    )
-    return _item_to_dashboard(published, tiles=_tiles_from_rows(published_tiles))
+        return _item_to_dashboard(published, tiles=_tiles_from_rows(published_tiles))
+
+    return await cached_json(cache_key, DASHBOARD_TTL_SECONDS, _compute)
 
 
 @router.put("/{dashboard_id}", response_model=DashboardOut)
@@ -393,6 +430,7 @@ async def update_dashboard(
                 ],
             )
     await context.session.refresh(published)
+    await bump_dashboard_cache_version(context.client_id, context.user_id)
     return _item_to_dashboard(published, tiles=tiles)
 
 
@@ -461,6 +499,7 @@ async def add_tile_to_draft(
             ),
         )
         draft.updated_at = _db_now()
+    await bump_dashboard_cache_version(context.client_id, context.user_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -521,6 +560,7 @@ async def update_tile_in_draft(
         tile.config = payload.model_dump()
         tile.updated_at = now_expr
         draft.updated_at = now_expr
+    await bump_dashboard_cache_version(context.client_id, context.user_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -578,6 +618,7 @@ async def delete_tile_from_draft(
             raise HTTPException(status_code=404, detail="Tile not found.")
         await context.session.delete(tile)
         draft.updated_at = _db_now()
+    await bump_dashboard_cache_version(context.client_id, context.user_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -650,6 +691,7 @@ async def update_draft_layout(
             updated = True
         if updated:
             draft.updated_at = now_expr
+    await bump_dashboard_cache_version(context.client_id, context.user_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -703,6 +745,7 @@ async def update_draft_metadata(
         draft.name = name
         draft.description = description
         draft.updated_at = _db_now()
+    await bump_dashboard_cache_version(context.client_id, context.user_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -762,6 +805,7 @@ async def commit_draft(
             )
         await context.session.delete(draft)
     await context.session.refresh(published)
+    await bump_dashboard_cache_version(context.client_id, context.user_id)
     return _item_to_dashboard(
         published,
         tiles=_tiles_from_rows(draft_tiles),
@@ -786,6 +830,7 @@ async def delete_draft(
         draft = result.scalar_one_or_none()
         if draft:
             await context.session.delete(draft)
+    await bump_dashboard_cache_version(context.client_id, context.user_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -809,4 +854,5 @@ async def delete_dashboard(
             raise HTTPException(status_code=404, detail="Dashboard not found.")
         for dashboard in dashboards_to_delete:
             await context.session.delete(dashboard)
+    await bump_dashboard_cache_version(context.client_id, context.user_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

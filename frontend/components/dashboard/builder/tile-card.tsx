@@ -19,6 +19,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { LoadingDots } from "@/components/ui/loading-indicator"
+import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
 
 import { formatMetricValue, getPalette } from "../data"
@@ -33,6 +35,8 @@ import type {
 import type { TileDefinition } from "../tiles/types"
 import { useTileData } from "../use-tile-data"
 import { getTileDefinition } from "../tiles/registry"
+
+const LOADING_BARS = [30, 60, 45, 70, 40, 55, 35, 50]
 
 export type TileCardProps = {
   tile: TileConfig
@@ -150,7 +154,14 @@ export function TileCard({
               variant={isError ? "destructive" : "outline"}
               className="rounded-full text-[10px]"
             >
-              {isError ? "Error" : "Loading"}
+              {isError ? (
+                "Error"
+              ) : (
+                <span className="flex items-center gap-1">
+                  <LoadingDots size="xs" className="text-muted-foreground" />
+                  Loading
+                </span>
+              )}
             </Badge>
           ) : null}
           {filterChips.length > 0 ? (
@@ -204,8 +215,27 @@ export function TileCard({
       ) : null}
       <div className="flex-1 min-h-0">
         {isLoading ? (
-          <div className="flex h-full items-center justify-center text-xs text-muted-foreground">
-            Loading live data...
+          <div className="flex h-full flex-col gap-4">
+            <div className="flex items-center gap-2">
+              <Skeleton className="h-3 w-20" />
+              <Skeleton className="h-3 w-12" />
+            </div>
+            <div className="relative flex-1 rounded-xl border border-border/60 bg-muted/30 p-4">
+              <div className="absolute inset-0 skeleton-shimmer opacity-60" />
+              <div className="relative grid h-full grid-cols-8 items-end gap-2">
+                {LOADING_BARS.map((height, idx) => (
+                  <div
+                    key={`tile-bar-${idx}`}
+                    className="rounded-sm bg-muted/60"
+                    style={{ height: `${height}%` }}
+                  />
+                ))}
+              </div>
+            </div>
+            <div className="flex items-center justify-between">
+              <Skeleton className="h-3 w-24" />
+              <Skeleton className="h-5 w-12" />
+            </div>
           </div>
         ) : isError ? (
           <div className="flex h-full items-center justify-center text-center text-xs text-rose-600">

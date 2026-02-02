@@ -6,6 +6,7 @@ import {
   useContainerWidth,
 } from "react-grid-layout"
 import { cn } from "@/lib/utils"
+import { Skeleton } from "@/components/ui/skeleton"
 
 import type {
   DimensionDefinition,
@@ -19,6 +20,8 @@ import { TileCard } from "./tile-card"
 import { gridBreakpoints, gridCols, type BreakpointKey } from "./utils"
 
 type GridLayouts = ResponsiveProps["layouts"]
+
+const LOADING_TILES = Array.from({ length: 6 })
 
 type DashboardGridProps = {
   tiles: TileConfig[]
@@ -112,13 +115,47 @@ export function DashboardGrid({
           ))}
         </ResponsiveGridLayout>
       ) : (
-        <div className="flex h-[360px] items-center justify-center text-center text-sm text-muted-foreground">
-          {catalogStatus === "loading"
-            ? "Loading metrics..."
-            : catalogStatus === "error"
-              ? catalogError ?? "Failed to load metrics."
-              : "No metrics available."}
-        </div>
+        <>
+          {catalogStatus === "loading" ? (
+            <div className="grid w-full gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              {LOADING_TILES.map((_, index) => (
+                <div
+                  key={`grid-skeleton-${index}`}
+                  className="rounded-2xl border border-border/60 bg-card/85 p-4 shadow-sm"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="space-y-2">
+                      <Skeleton className="h-4 w-32" />
+                      <Skeleton className="h-3 w-20" />
+                    </div>
+                    <Skeleton className="h-5 w-16 rounded-full" />
+                  </div>
+                  <div className="mt-4 rounded-xl border border-border/60 bg-muted/30 p-4">
+                    <div className="grid h-24 grid-cols-8 items-end gap-2">
+                      {[30, 60, 45, 70, 40, 55, 35, 50].map((height, idx) => (
+                        <div
+                          key={`grid-bar-${index}-${idx}`}
+                          className="skeleton-shimmer rounded-sm bg-muted/60"
+                          style={{ height: `${height}%` }}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                  <div className="mt-4 flex items-center justify-between">
+                    <Skeleton className="h-3 w-24" />
+                    <Skeleton className="h-5 w-12" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="flex h-[360px] items-center justify-center text-center text-sm text-muted-foreground">
+              {catalogStatus === "error"
+                ? catalogError ?? "Failed to load metrics."
+                : "No metrics available."}
+            </div>
+          )}
+        </>
       )}
     </main>
   )
