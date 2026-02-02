@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
 import time
@@ -15,10 +16,15 @@ from fastapi import Header, HTTPException, status
 from jwt import PyJWK, PyJWTError
 
 from app.core import config as _config  # noqa: F401
+from app.core.cache import cache_get_json, cache_set_json
 
 HTTP_STATUS_ERROR_THRESHOLD = 400
 JWKS_CACHE_TTL_SECONDS = 3600
 JWKS_REQUEST_TIMEOUT_SECONDS = 5.0
+JWKS_CACHE_KEY_PREFIX = "neon-auth:jwks"
+
+DEFAULT_CLIENT_ID = "local-client"
+DEFAULT_USER_ID = "local-user"
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +52,20 @@ class NeonAuthSettings:
     audience: str | None
 
 
+def _auth_enforced() -> bool:
+    value = (os.getenv("NEON_AUTH_ENFORCE") or "").strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
+def _fallback_id(
+    header_value: str | None,
+    env_key: str,
+    default_value: str,
+) -> str:
+    from_env = (os.getenv(env_key) or "").strip()
+    return (header_value or "").strip() or from_env or default_value
+
+
 def _build_settings() -> NeonAuthSettings:
     base_url = os.getenv("NEON_AUTH_BASE_URL", "").strip()
     jwks_url = os.getenv("NEON_AUTH_JWKS_URL", "").strip()
@@ -70,6 +90,12 @@ def _resolve_user_id(claims: dict[str, Any]) -> str:
     )
 
 
+def _jwks_cache_key(settings: NeonAuthSettings) -> str:
+    marker = settings.jwks_url or settings.base_url or "default"
+    digest = hashlib.sha256(marker.encode("utf-8")).hexdigest()
+    return f"{JWKS_CACHE_KEY_PREFIX}:{digest}"
+
+
 async def _fetch_jwks(settings: NeonAuthSettings) -> dict[str, Any]:
     if not settings.jwks_url:
         raise HTTPException(
@@ -86,18 +112,26 @@ async def _fetch_jwks(settings: NeonAuthSettings) -> dict[str, Any]:
     return response.json()
 
 
-async def _get_jwks(settings: NeonAuthSettings) -> dict[str, Any]:
+async def _get_jwks(settings: NeonAuthSettings, *, force_refresh: bool = False) -> dict[str, Any]:
     now = time.time()
-    if _JWKS_CACHE and now < _JWKS_STATE["expires_at"]:
+    if not force_refresh and _JWKS_CACHE and now < _JWKS_STATE["expires_at"]:
         return _JWKS_CACHE
     async with _JWKS_LOCK:
         now = time.time()
-        if _JWKS_CACHE and now < _JWKS_STATE["expires_at"]:
+        if not force_refresh and _JWKS_CACHE and now < _JWKS_STATE["expires_at"]:
             return _JWKS_CACHE
+        if not force_refresh:
+            cached = await cache_get_json(_jwks_cache_key(settings))
+            if isinstance(cached, dict) and cached.get("keys"):
+                _JWKS_CACHE.clear()
+                _JWKS_CACHE.update(cached)
+                _JWKS_STATE["expires_at"] = now + JWKS_CACHE_TTL_SECONDS
+                return _JWKS_CACHE
         jwks = await _fetch_jwks(settings)
         _JWKS_CACHE.clear()
         _JWKS_CACHE.update(jwks)
         _JWKS_STATE["expires_at"] = now + JWKS_CACHE_TTL_SECONDS
+        await cache_set_json(_jwks_cache_key(settings), jwks, JWKS_CACHE_TTL_SECONDS)
         return _JWKS_CACHE
 
 
@@ -136,7 +170,7 @@ async def _verify_token(token: str) -> dict[str, Any]:
     signing_key = _select_signing_key(jwks, key_id)
     if signing_key is None:
         _JWKS_CACHE.clear()
-        jwks = await _get_jwks(settings)
+        jwks = await _get_jwks(settings, force_refresh=True)
         signing_key = _select_signing_key(jwks, key_id)
     if signing_key is None:
         logger.warning("auth token kid not found in jwks", extra={"kid": key_id})
@@ -172,8 +206,18 @@ async def _verify_token(token: str) -> dict[str, Any]:
 
 async def require_neon_auth(
     authorization: str | None = Header(default=None, alias="Authorization"),
+    client_id: str | None = Header(default=None, alias="X-Client-Id"),
+    user_id: str | None = Header(default=None, alias="X-User-Id"),
 ) -> AuthContext:
     """Require a valid Neon Auth JWT bearer token."""
+    if not _auth_enforced():
+        return AuthContext(
+            user_id=_fallback_id(user_id, "NEON_AUTH_FALLBACK_USER_ID", DEFAULT_USER_ID),
+            client_id=_fallback_id(
+                client_id, "NEON_AUTH_FALLBACK_CLIENT_ID", DEFAULT_CLIENT_ID,
+            ),
+            claims={},
+        )
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -186,5 +230,5 @@ async def require_neon_auth(
             detail="Missing auth token.",
         )
     claims = await _verify_token(token)
-    user_id = _resolve_user_id(claims)
-    return AuthContext(user_id=user_id, client_id=user_id, claims=claims)
+    resolved_user_id = _resolve_user_id(claims)
+    return AuthContext(user_id=resolved_user_id, client_id=resolved_user_id, claims=claims)

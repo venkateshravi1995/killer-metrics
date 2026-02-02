@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react"
 
 import { neonAuthClient } from "@/lib/auth"
+import { LoadingOrbit } from "@/components/ui/loading-indicator"
 
 type SignOutStatus = "pending" | "error"
 
@@ -43,9 +44,10 @@ export default function SignOutPage() {
           Signing out
         </h1>
         {status === "pending" ? (
-          <p className="mt-4 text-sm text-muted-foreground">
-            Ending your session...
-          </p>
+          <div className="mt-6 flex flex-col items-center gap-3 text-sm text-muted-foreground">
+            <LoadingOrbit size="lg" />
+            <p>Ending your session...</p>
+          </div>
         ) : (
           <>
             <p className="mt-4 text-sm text-destructive">{errorMessage}</p>

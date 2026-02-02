@@ -16,6 +16,8 @@ import {
 } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { LoadingOrbit, LoadingOverlay } from "@/components/ui/loading-indicator"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Slider } from "@/components/ui/slider"
 import { Switch } from "@/components/ui/switch"
 import { getNeonAuthToken } from "@/lib/neon-auth-token"
@@ -54,6 +56,8 @@ const DEFAULT_FIELDS: SearchField[] = [
   "metric_description",
   "metric_type",
 ]
+
+const RESULT_SKELETONS = Array.from({ length: 4 })
 
 function splitTokens(value: string) {
   return value
@@ -255,7 +259,11 @@ export default function MetricsSearchPage() {
                   disabled={loading}
                   className="h-11 gap-2 px-5"
                 >
-                  <Search className="size-4" />
+                  {loading ? (
+                    <LoadingOrbit size="sm" className="text-primary-foreground" />
+                  ) : (
+                    <Search className="size-4" />
+                  )}
                   {loading ? "Searching..." : "Search"}
                 </Button>
               </form>
@@ -470,67 +478,98 @@ export default function MetricsSearchPage() {
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                {error ? (
-                  <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
-                    {error}
-                  </div>
-                ) : null}
-                {!response ? (
-                  <div className="rounded-lg border border-border/70 bg-background/60 p-4 text-sm text-muted-foreground">
-                    Use the search bar to explore metrics.
-                  </div>
-                ) : response.items.length === 0 ? (
-                  <div className="rounded-lg border border-border/70 bg-background/60 p-4 text-sm text-muted-foreground">
-                    No matches. Try a broader query or remove filters.
-                  </div>
-                ) : (
-                  <div className="grid gap-4">
-                    {response.items.map((item) => (
-                      <div
-                        key={item.metric_key}
-                        className="rounded-2xl border border-border/70 bg-background/70 p-4 shadow-sm"
-                      >
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div>
-                            <div className="text-base font-semibold">
-                              {item.metric_name}
+                <div className="relative space-y-4">
+                  {loading && response ? (
+                    <LoadingOverlay label="Refreshing results" />
+                  ) : null}
+                  {error ? (
+                    <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
+                      {error}
+                    </div>
+                  ) : null}
+                  {loading && !response ? (
+                    <div className="grid gap-4">
+                      {RESULT_SKELETONS.map((_, index) => (
+                        <div
+                          key={`result-skeleton-${index}`}
+                          className="rounded-2xl border border-border/70 bg-background/70 p-4 shadow-sm"
+                        >
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div className="space-y-2">
+                              <Skeleton className="h-4 w-40" />
+                              <Skeleton className="h-3 w-24" />
                             </div>
-                            <div className="text-xs text-muted-foreground">
-                              {item.metric_key}
-                            </div>
+                            <Skeleton className="h-5 w-16 rounded-full" />
                           </div>
-                          <Badge
-                            variant={item.is_active ? "secondary" : "outline"}
-                            className="rounded-full text-[10px] uppercase"
-                          >
-                            {item.is_active ? "Active" : "Inactive"}
-                          </Badge>
+                          <div className="mt-3 space-y-2">
+                            <Skeleton className="h-3 w-full" />
+                            <Skeleton className="h-3 w-5/6" />
+                          </div>
+                          <div className="mt-4 flex flex-wrap gap-2">
+                            <Skeleton className="h-5 w-20 rounded-full" />
+                            <Skeleton className="h-5 w-20 rounded-full" />
+                            <Skeleton className="h-5 w-16 rounded-full" />
+                          </div>
                         </div>
-                        <p className="mt-3 text-sm text-muted-foreground">
-                          {item.metric_description || "No description yet."}
-                        </p>
-                        <div className="mt-4 flex flex-wrap gap-2">
-                          <Badge variant="secondary" className="rounded-full">
-                            {item.metric_type}
-                          </Badge>
-                          <Badge variant="secondary" className="rounded-full">
-                            {item.aggregation}
-                          </Badge>
-                          {item.unit ? (
-                            <Badge variant="outline" className="rounded-full">
-                              {item.unit}
+                      ))}
+                    </div>
+                  ) : !response ? (
+                    <div className="rounded-lg border border-border/70 bg-background/60 p-4 text-sm text-muted-foreground">
+                      Use the search bar to explore metrics.
+                    </div>
+                  ) : response.items.length === 0 ? (
+                    <div className="rounded-lg border border-border/70 bg-background/60 p-4 text-sm text-muted-foreground">
+                      No matches. Try a broader query or remove filters.
+                    </div>
+                  ) : (
+                    <div className="grid gap-4">
+                      {response.items.map((item) => (
+                        <div
+                          key={item.metric_key}
+                          className="rounded-2xl border border-border/70 bg-background/70 p-4 shadow-sm"
+                        >
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div>
+                              <div className="text-base font-semibold">
+                                {item.metric_name}
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                {item.metric_key}
+                              </div>
+                            </div>
+                            <Badge
+                              variant={item.is_active ? "secondary" : "outline"}
+                              className="rounded-full text-[10px] uppercase"
+                            >
+                              {item.is_active ? "Active" : "Inactive"}
                             </Badge>
-                          ) : null}
-                          {item.directionality ? (
-                            <Badge variant="outline" className="rounded-full">
-                              {item.directionality}
+                          </div>
+                          <p className="mt-3 text-sm text-muted-foreground">
+                            {item.metric_description || "No description yet."}
+                          </p>
+                          <div className="mt-4 flex flex-wrap gap-2">
+                            <Badge variant="secondary" className="rounded-full">
+                              {item.metric_type}
                             </Badge>
-                          ) : null}
+                            <Badge variant="secondary" className="rounded-full">
+                              {item.aggregation}
+                            </Badge>
+                            {item.unit ? (
+                              <Badge variant="outline" className="rounded-full">
+                                {item.unit}
+                              </Badge>
+                            ) : null}
+                            {item.directionality ? (
+                              <Badge variant="outline" className="rounded-full">
+                                {item.directionality}
+                              </Badge>
+                            ) : null}
+                          </div>
                         </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                      ))}
+                    </div>
+                  )}
+                </div>
               </CardContent>
               <CardFooter className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">

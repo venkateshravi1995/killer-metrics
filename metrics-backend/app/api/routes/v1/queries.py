@@ -8,6 +8,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.sql.elements import ColumnElement
 
+from app.api.cache import QUERY_TTL_SECONDS, build_cache_key, cached_json, get_metrics_cache_version
 from app.api.routes.v1.utils import apply_dimension_pairs, apply_group_by, parse_dimension_pairs
 from app.api.schemas.queries import AggregateQuery, TimeseriesQuery, TopKQuery
 from app.db.helpers import (
@@ -165,94 +166,103 @@ async def post_timeseries(
     connection: Annotated[PostgresExecutor, Depends(get_connection)],
 ) -> dict:
     """Return timeseries data for one or more metrics."""
-    requested_grain = normalize_grain(payload.grain)
-    if not is_supported_grain(requested_grain):
-        raise HTTPException(status_code=400, detail="unsupported grain")
-    metric_meta = await resolve_metric_ids(connection, payload.metric_keys)
-    metric_ids = [int(meta["metric_id"]) for meta in metric_meta.values()]
-    source_grains = await resolve_metric_source_grains(
-        connection,
-        metric_ids,
-        requested_grain,
+    cache_version = await get_metrics_cache_version()
+    cache_key = build_cache_key(
+        "query:timeseries",
+        {"version": cache_version, "payload": payload},
     )
-    metric_order = {key: idx for idx, key in enumerate(payload.metric_keys)}
-    metric_id_to_key = {int(meta["metric_id"]): key for key, meta in metric_meta.items()}
 
-    aggregation_groups = _build_aggregation_groups(metric_meta)
-    group_by_labels, dimension_ids = await _resolve_dimension_context(
-        connection,
-        payload.group_by,
-    )
-    filter_pairs = _build_filter_pairs(payload.filters or [])
-
-    series_map: dict[str, dict] = {}
-
-    for aggregation, metric_ids in aggregation_groups.items():
-        metric_ids_by_grain = _group_metric_ids_by_grain(metric_ids, source_grains)
-        if not metric_ids_by_grain:
-            continue
-        agg_expr = _aggregation_expression(aggregation).label("value")
-        time_bucket = build_time_bucket(
+    async def _compute() -> dict:
+        requested_grain = normalize_grain(payload.grain)
+        if not is_supported_grain(requested_grain):
+            raise HTTPException(status_code=400, detail="unsupported grain")
+        metric_meta = await resolve_metric_ids(connection, payload.metric_keys)
+        metric_ids = [int(meta["metric_id"]) for meta in metric_meta.values()]
+        source_grains = await resolve_metric_source_grains(
+            connection,
+            metric_ids,
             requested_grain,
-            MetricObservation.time_start_ts,
-        ).label("time_start_ts")
-        for source_grain, source_metric_ids in metric_ids_by_grain.items():
-            stmt = (
-                select(
-                    MetricSeries.metric_id,
-                    time_bucket,
-                    agg_expr,
-                )
-                .join(
-                    MetricSeries,
-                    MetricSeries.series_id == MetricObservation.series_id,
-                )
-                .where(
-                    MetricSeries.metric_id.in_(source_metric_ids),
-                    MetricSeries.grain == source_grain,
-                    MetricObservation.time_start_ts >= payload.start_time,
-                    MetricObservation.time_start_ts < payload.end_time,
-                )
-            )
+        )
+        metric_order = {key: idx for idx, key in enumerate(payload.metric_keys)}
+        metric_id_to_key = {int(meta["metric_id"]): key for key, meta in metric_meta.items()}
 
-            if filter_pairs:
-                stmt = await apply_dimension_pairs(
+        aggregation_groups = _build_aggregation_groups(metric_meta)
+        group_by_labels, dimension_ids = await _resolve_dimension_context(
+            connection,
+            payload.group_by,
+        )
+        filter_pairs = _build_filter_pairs(payload.filters or [])
+
+        series_map: dict[str, dict] = {}
+
+        for aggregation, metric_ids in aggregation_groups.items():
+            metric_ids_by_grain = _group_metric_ids_by_grain(metric_ids, source_grains)
+            if not metric_ids_by_grain:
+                continue
+            agg_expr = _aggregation_expression(aggregation).label("value")
+            time_bucket = build_time_bucket(
+                requested_grain,
+                MetricObservation.time_start_ts,
+            ).label("time_start_ts")
+            for source_grain, source_metric_ids in metric_ids_by_grain.items():
+                stmt = (
+                    select(
+                        MetricSeries.metric_id,
+                        time_bucket,
+                        agg_expr,
+                    )
+                    .join(
+                        MetricSeries,
+                        MetricSeries.series_id == MetricObservation.series_id,
+                    )
+                    .where(
+                        MetricSeries.metric_id.in_(source_metric_ids),
+                        MetricSeries.grain == source_grain,
+                        MetricObservation.time_start_ts >= payload.start_time,
+                        MetricObservation.time_start_ts < payload.end_time,
+                    )
+                )
+
+                if filter_pairs:
+                    stmt = await apply_dimension_pairs(
+                        stmt,
+                        connection,
+                        filter_pairs,
+                        "timeseries",
+                    )
+
+                stmt, group_by_labels = await apply_group_by(
                     stmt,
                     connection,
-                    filter_pairs,
+                    group_by_labels,
                     "timeseries",
+                    dimension_ids,
                 )
 
-            stmt, group_by_labels = await apply_group_by(
-                stmt,
-                connection,
-                group_by_labels,
-                "timeseries",
-                dimension_ids,
-            )
+                stmt = stmt.group_by(
+                    MetricSeries.metric_id,
+                    time_bucket,
+                )
+                stmt = stmt.order_by(time_bucket)
 
-            stmt = stmt.group_by(
-                MetricSeries.metric_id,
-                time_bucket,
-            )
-            stmt = stmt.order_by(time_bucket)
+                result = await connection.execute(stmt)
+                rows = result.mappings().all()
+                _append_timeseries_rows(
+                    series_map,
+                    rows,
+                    metric_id_to_key,
+                    group_by_labels,
+                )
 
-            result = await connection.execute(stmt)
-            rows = result.mappings().all()
-            _append_timeseries_rows(
-                series_map,
-                rows,
-                metric_id_to_key,
-                group_by_labels,
-            )
+        series = _finalize_series(series_map, metric_order, group_by_labels)
 
-    series = _finalize_series(series_map, metric_order, group_by_labels)
+        return {
+            "metric_keys": payload.metric_keys,
+            "grain": requested_grain,
+            "series": series,
+        }
 
-    return {
-        "metric_keys": payload.metric_keys,
-        "grain": requested_grain,
-        "series": series,
-    }
+    return await cached_json(cache_key, QUERY_TTL_SECONDS, _compute)
 
 
 @router.get("/latest")
@@ -263,51 +273,65 @@ async def get_latest(
     dimensions: Annotated[list[str] | None, Query()] = None,
 ) -> dict:
     """Return the latest observation for a metric."""
-    requested_grain = normalize_grain(grain)
-    if not is_supported_grain(requested_grain):
-        raise HTTPException(status_code=400, detail="unsupported grain")
-    metric_id = await resolve_metric_id(connection, metric_key)
-    source_grains = await resolve_metric_source_grains(
-        connection,
-        [metric_id],
-        requested_grain,
-    )
-    source_grain = source_grains.get(metric_id, requested_grain)
-    filter_pairs = parse_dimension_pairs(dimensions)
-
-    time_bucket = build_time_bucket(
-        requested_grain,
-        MetricObservation.time_start_ts,
-    ).label(
-        "time_start_ts",
-    )
-    stmt = (
-        select(
-            time_bucket,
-            MetricObservation.value_num,
-        )
-        .join(
-            MetricSeries,
-            MetricSeries.series_id == MetricObservation.series_id,
-        )
-        .where(
-            MetricSeries.metric_id == metric_id,
-            MetricSeries.grain == source_grain,
-        )
+    cache_version = await get_metrics_cache_version()
+    cache_key = build_cache_key(
+        "query:latest",
+        {
+            "version": cache_version,
+            "metric_key": metric_key,
+            "grain": grain,
+            "dimensions": dimensions,
+        },
     )
 
-    if filter_pairs:
-        stmt = await apply_dimension_pairs(stmt, connection, filter_pairs, "latest")
+    async def _compute() -> dict:
+        requested_grain = normalize_grain(grain)
+        if not is_supported_grain(requested_grain):
+            raise HTTPException(status_code=400, detail="unsupported grain")
+        metric_id = await resolve_metric_id(connection, metric_key)
+        source_grains = await resolve_metric_source_grains(
+            connection,
+            [metric_id],
+            requested_grain,
+        )
+        source_grain = source_grains.get(metric_id, requested_grain)
+        filter_pairs = parse_dimension_pairs(dimensions)
 
-    stmt = stmt.order_by(MetricObservation.time_start_ts.desc()).limit(1)
-    result = await connection.execute(stmt)
-    row = result.mappings().first()
-    return {
-        "metric_key": metric_key,
-        "grain": requested_grain,
-        "time_start_ts": row["time_start_ts"] if row else None,
-        "value": row["value_num"] if row else None,
-    }
+        time_bucket = build_time_bucket(
+            requested_grain,
+            MetricObservation.time_start_ts,
+        ).label(
+            "time_start_ts",
+        )
+        stmt = (
+            select(
+                time_bucket,
+                MetricObservation.value_num,
+            )
+            .join(
+                MetricSeries,
+                MetricSeries.series_id == MetricObservation.series_id,
+            )
+            .where(
+                MetricSeries.metric_id == metric_id,
+                MetricSeries.grain == source_grain,
+            )
+        )
+
+        if filter_pairs:
+            stmt = await apply_dimension_pairs(stmt, connection, filter_pairs, "latest")
+
+        stmt = stmt.order_by(MetricObservation.time_start_ts.desc()).limit(1)
+        result = await connection.execute(stmt)
+        row = result.mappings().first()
+        return {
+            "metric_key": metric_key,
+            "grain": requested_grain,
+            "time_start_ts": row["time_start_ts"] if row else None,
+            "value": row["value_num"] if row else None,
+        }
+
+    return await cached_json(cache_key, QUERY_TTL_SECONDS, _compute)
 
 
 @router.post("/aggregate")
@@ -316,79 +340,88 @@ async def post_aggregate(
     connection: Annotated[PostgresExecutor, Depends(get_connection)],
 ) -> dict:
     """Aggregate metrics over a time range."""
-    requested_grain = normalize_grain(payload.grain)
-    if not is_supported_grain(requested_grain):
-        raise HTTPException(status_code=400, detail="unsupported grain")
-    metric_meta = await resolve_metric_ids(connection, payload.metric_keys)
-    metric_ids = [int(meta["metric_id"]) for meta in metric_meta.values()]
-    source_grains = await resolve_metric_source_grains(
-        connection,
-        metric_ids,
-        requested_grain,
+    cache_version = await get_metrics_cache_version()
+    cache_key = build_cache_key(
+        "query:aggregate",
+        {"version": cache_version, "payload": payload},
     )
-    metric_order = {key: idx for idx, key in enumerate(payload.metric_keys)}
-    metric_id_to_key = {int(meta["metric_id"]): key for key, meta in metric_meta.items()}
 
-    aggregation_groups = _build_aggregation_groups(metric_meta)
-    group_by_labels, dimension_ids = await _resolve_dimension_context(
-        connection,
-        payload.group_by,
-    )
-    filter_pairs = _build_filter_pairs(payload.filters or [])
+    async def _compute() -> dict:
+        requested_grain = normalize_grain(payload.grain)
+        if not is_supported_grain(requested_grain):
+            raise HTTPException(status_code=400, detail="unsupported grain")
+        metric_meta = await resolve_metric_ids(connection, payload.metric_keys)
+        metric_ids = [int(meta["metric_id"]) for meta in metric_meta.values()]
+        source_grains = await resolve_metric_source_grains(
+            connection,
+            metric_ids,
+            requested_grain,
+        )
+        metric_order = {key: idx for idx, key in enumerate(payload.metric_keys)}
+        metric_id_to_key = {int(meta["metric_id"]): key for key, meta in metric_meta.items()}
 
-    items: list[dict] = []
+        aggregation_groups = _build_aggregation_groups(metric_meta)
+        group_by_labels, dimension_ids = await _resolve_dimension_context(
+            connection,
+            payload.group_by,
+        )
+        filter_pairs = _build_filter_pairs(payload.filters or [])
 
-    for aggregation, metric_ids in aggregation_groups.items():
-        metric_ids_by_grain = _group_metric_ids_by_grain(metric_ids, source_grains)
-        if not metric_ids_by_grain:
-            continue
-        agg_expr = _aggregation_expression(aggregation).label("value")
-        for source_grain, source_metric_ids in metric_ids_by_grain.items():
-            stmt = (
-                select(
-                    MetricSeries.metric_id,
-                    agg_expr,
+        items: list[dict] = []
+
+        for aggregation, metric_ids in aggregation_groups.items():
+            metric_ids_by_grain = _group_metric_ids_by_grain(metric_ids, source_grains)
+            if not metric_ids_by_grain:
+                continue
+            agg_expr = _aggregation_expression(aggregation).label("value")
+            for source_grain, source_metric_ids in metric_ids_by_grain.items():
+                stmt = (
+                    select(
+                        MetricSeries.metric_id,
+                        agg_expr,
+                    )
+                    .join(
+                        MetricSeries,
+                        MetricSeries.series_id == MetricObservation.series_id,
+                    )
+                    .where(
+                        MetricSeries.metric_id.in_(source_metric_ids),
+                        MetricSeries.grain == source_grain,
+                        MetricObservation.time_start_ts >= payload.start_time,
+                        MetricObservation.time_start_ts < payload.end_time,
+                    )
                 )
-                .join(
-                    MetricSeries,
-                    MetricSeries.series_id == MetricObservation.series_id,
-                )
-                .where(
-                    MetricSeries.metric_id.in_(source_metric_ids),
-                    MetricSeries.grain == source_grain,
-                    MetricObservation.time_start_ts >= payload.start_time,
-                    MetricObservation.time_start_ts < payload.end_time,
-                )
-            )
 
-            if filter_pairs:
-                stmt = await apply_dimension_pairs(
+                if filter_pairs:
+                    stmt = await apply_dimension_pairs(
+                        stmt,
+                        connection,
+                        filter_pairs,
+                        "agg",
+                    )
+
+                stmt, group_by_labels = await apply_group_by(
                     stmt,
                     connection,
-                    filter_pairs,
+                    group_by_labels,
                     "agg",
+                    dimension_ids,
                 )
 
-            stmt, group_by_labels = await apply_group_by(
-                stmt,
-                connection,
-                group_by_labels,
-                "agg",
-                dimension_ids,
-            )
+                stmt = stmt.group_by(MetricSeries.metric_id)
+                result = await connection.execute(stmt)
+                rows = result.mappings().all()
+                _append_aggregate_rows(items, rows, metric_id_to_key, group_by_labels)
 
-            stmt = stmt.group_by(MetricSeries.metric_id)
-            result = await connection.execute(stmt)
-            rows = result.mappings().all()
-            _append_aggregate_rows(items, rows, metric_id_to_key, group_by_labels)
+        items = _finalize_groups(items, metric_order, group_by_labels)
 
-    items = _finalize_groups(items, metric_order, group_by_labels)
+        return {
+            "metric_keys": payload.metric_keys,
+            "grain": requested_grain,
+            "groups": items,
+        }
 
-    return {
-        "metric_keys": payload.metric_keys,
-        "grain": requested_grain,
-        "groups": items,
-    }
+    return await cached_json(cache_key, QUERY_TTL_SECONDS, _compute)
 
 
 @router.post("/topk")
@@ -397,63 +430,72 @@ async def post_topk(
     connection: Annotated[PostgresExecutor, Depends(get_connection)],
 ) -> dict:
     """Return the top-K results for a metric group-by."""
-    requested_grain = normalize_grain(payload.grain)
-    if not is_supported_grain(requested_grain):
-        raise HTTPException(status_code=400, detail="unsupported grain")
-    metric_id = await resolve_metric_id(connection, payload.metric_key)
-    source_grains = await resolve_metric_source_grains(
-        connection,
-        [metric_id],
-        requested_grain,
+    cache_version = await get_metrics_cache_version()
+    cache_key = build_cache_key(
+        "query:topk",
+        {"version": cache_version, "payload": payload},
     )
-    source_grain = source_grains.get(metric_id, requested_grain)
 
-    metric_result = await connection.execute(
-        select(MetricDefinition.aggregation).where(MetricDefinition.metric_id == metric_id),
-    )
-    aggregation = metric_result.scalar_one_or_none() or "sum"
-    agg_expr = _aggregation_expression(aggregation).label("value")
-
-    stmt = (
-        select(agg_expr)
-        .join(
-            MetricSeries,
-            MetricSeries.series_id == MetricObservation.series_id,
+    async def _compute() -> dict:
+        requested_grain = normalize_grain(payload.grain)
+        if not is_supported_grain(requested_grain):
+            raise HTTPException(status_code=400, detail="unsupported grain")
+        metric_id = await resolve_metric_id(connection, payload.metric_key)
+        source_grains = await resolve_metric_source_grains(
+            connection,
+            [metric_id],
+            requested_grain,
         )
-        .where(
-            MetricSeries.metric_id == metric_id,
-            MetricSeries.grain == source_grain,
-            MetricObservation.time_start_ts >= payload.start_time,
-            MetricObservation.time_start_ts < payload.end_time,
+        source_grain = source_grains.get(metric_id, requested_grain)
+
+        metric_result = await connection.execute(
+            select(MetricDefinition.aggregation).where(MetricDefinition.metric_id == metric_id),
         )
-    )
+        aggregation = metric_result.scalar_one_or_none() or "sum"
+        agg_expr = _aggregation_expression(aggregation).label("value")
 
-    filter_pairs = _build_filter_pairs(payload.filters or [])
-    if filter_pairs:
-        stmt = await apply_dimension_pairs(stmt, connection, filter_pairs, "topk")
+        stmt = (
+            select(agg_expr)
+            .join(
+                MetricSeries,
+                MetricSeries.series_id == MetricObservation.series_id,
+            )
+            .where(
+                MetricSeries.metric_id == metric_id,
+                MetricSeries.grain == source_grain,
+                MetricObservation.time_start_ts >= payload.start_time,
+                MetricObservation.time_start_ts < payload.end_time,
+            )
+        )
 
-    stmt, group_by_labels = await apply_group_by(
-        stmt,
-        connection,
-        payload.group_by or [],
-        "topk",
-    )
+        filter_pairs = _build_filter_pairs(payload.filters or [])
+        if filter_pairs:
+            stmt = await apply_dimension_pairs(stmt, connection, filter_pairs, "topk")
 
-    order_expr = agg_expr.asc() if payload.order == "asc" else agg_expr.desc()
-    stmt = stmt.order_by(order_expr).limit(payload.k)
+        stmt, group_by_labels = await apply_group_by(
+            stmt,
+            connection,
+            payload.group_by or [],
+            "topk",
+        )
 
-    result = await connection.execute(stmt)
-    rows = result.mappings().all()
-    items = []
-    for row in rows:
-        dimensions = {key: row[key] for key in group_by_labels}
-        items.append({"dimensions": dimensions, "value": row["value"]})
+        order_expr = agg_expr.asc() if payload.order == "asc" else agg_expr.desc()
+        stmt = stmt.order_by(order_expr).limit(payload.k)
 
-    return {
-        "metric_key": payload.metric_key,
-        "grain": requested_grain,
-        "items": items,
-    }
+        result = await connection.execute(stmt)
+        rows = result.mappings().all()
+        items = []
+        for row in rows:
+            dimensions = {key: row[key] for key in group_by_labels}
+            items.append({"dimensions": dimensions, "value": row["value"]})
+
+        return {
+            "metric_key": payload.metric_key,
+            "grain": requested_grain,
+            "items": items,
+        }
+
+    return await cached_json(cache_key, QUERY_TTL_SECONDS, _compute)
 
 
 def _build_filter_pairs(filters: list) -> list[tuple[int, int]]:

@@ -19,6 +19,7 @@ import {
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { LoadingDots } from "@/components/ui/loading-indicator"
 import Link from "next/link"
 
 import {
@@ -256,17 +257,26 @@ export function DashboardHeader({
                 <div className="flex flex-wrap items-center gap-2">
                   {dashboardStatus === "saving" ? (
                     <Badge variant="secondary" className="text-xs">
-                      Saving
+                      <span className="flex items-center gap-1">
+                        <LoadingDots size="xs" className="text-muted-foreground" />
+                        Saving
+                      </span>
                     </Badge>
                   ) : null}
                   {dashboardStatus === "loading" ? (
                     <Badge variant="secondary" className="text-xs">
-                      Loading
+                      <span className="flex items-center gap-1">
+                        <LoadingDots size="xs" className="text-muted-foreground" />
+                        Loading
+                      </span>
                     </Badge>
                   ) : null}
                   {draftStatus === "saving" ? (
                     <Badge variant="secondary" className="text-xs">
-                      Syncing
+                      <span className="flex items-center gap-1">
+                        <LoadingDots size="xs" className="text-muted-foreground" />
+                        Syncing
+                      </span>
                     </Badge>
                   ) : null}
                 </div>

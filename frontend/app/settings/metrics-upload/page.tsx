@@ -14,6 +14,8 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { LoadingOrbit } from "@/components/ui/loading-indicator"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Separator } from "@/components/ui/separator"
 
 const REQUIRED_COLUMNS = [
@@ -94,7 +96,14 @@ export default function MetricsUploadPage() {
               />
               <div className="flex flex-wrap gap-3">
                 <Button type="submit" disabled={isSubmitting}>
-                  {isSubmitting ? "Uploading..." : "Upload Metrics"}
+                  {isSubmitting ? (
+                    <>
+                      <LoadingOrbit size="sm" className="text-primary-foreground" />
+                      Uploading...
+                    </>
+                  ) : (
+                    "Upload Metrics"
+                  )}
                 </Button>
                 {file ? (
                   <span className="text-sm text-muted-foreground">
@@ -107,6 +116,19 @@ export default function MetricsUploadPage() {
               <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
                 {error}
               </p>
+            ) : null}
+            {isSubmitting ? (
+              <div className="rounded-md border border-border/60 bg-background/70 px-4 py-3">
+                <div className="flex items-center gap-3 text-sm text-muted-foreground">
+                  <LoadingOrbit size="sm" />
+                  Processing your CSV and validating rows...
+                </div>
+                <div className="mt-3 grid gap-2">
+                  <Skeleton className="h-3 w-48" />
+                  <Skeleton className="h-3 w-56" />
+                  <Skeleton className="h-3 w-44" />
+                </div>
+              </div>
             ) : null}
             {result ? (
               <div className="rounded-md border border-primary/20 bg-primary/5 px-4 py-3 text-sm">

@@ -162,6 +162,33 @@
   }
 }
 
+@keyframes skeleton-sheen {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(120%);
+  }
+}
+
+@keyframes orbit-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes loading-dot {
+  0%,
+  100% {
+    opacity: 0.25;
+    transform: translateY(0);
+  }
+  50% {
+    opacity: 0.9;
+    transform: translateY(-2px);
+  }
+}
+
 @keyframes auth-float {
   0% {
     transform: translate3d(0, 0, 0);
@@ -370,6 +397,82 @@
     background-image:
       linear-gradient(135deg, rgba(226, 232, 240, 0.08), rgba(15, 23, 42, 0) 42%),
       radial-gradient(rgba(226, 232, 240, 0.12) 1px, transparent 1px);
+  }
+
+  .skeleton-shimmer {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .skeleton-shimmer::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    transform: translateX(-120%);
+    background: linear-gradient(
+      110deg,
+      transparent 0%,
+      rgba(255, 255, 255, 0.7) 45%,
+      transparent 75%
+    );
+    animation: skeleton-sheen 1.6s ease-in-out infinite;
+    pointer-events: none;
+  }
+
+  .dark .skeleton-shimmer::after {
+    background: linear-gradient(
+      110deg,
+      transparent 0%,
+      rgba(255, 255, 255, 0.2) 45%,
+      transparent 75%
+    );
+  }
+
+  .loading-orbit {
+    display: inline-block;
+    border-radius: 999px;
+    background: conic-gradient(
+      from 120deg,
+      transparent 0deg,
+      currentColor 90deg,
+      transparent 180deg,
+      currentColor 260deg,
+      transparent 360deg
+    );
+    mask: radial-gradient(
+      farthest-side,
+      transparent calc(100% - 2px),
+      #000 calc(100% - 2px)
+    );
+    -webkit-mask: radial-gradient(
+      farthest-side,
+      transparent calc(100% - 2px),
+      #000 calc(100% - 2px)
+    );
+    animation: orbit-spin 0.9s linear infinite;
+  }
+
+  .loading-dots {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .loading-dots span {
+    width: var(--dot-size, 4px);
+    height: var(--dot-size, 4px);
+    border-radius: 999px;
+    background: currentColor;
+    animation: loading-dot 1.2s ease-in-out infinite;
+    opacity: 0.3;
+  }
+
+  .loading-dots span:nth-child(2) {
+    animation-delay: 0.15s;
+  }
+
+  .loading-dots span:nth-child(3) {
+    animation-delay: 0.3s;
   }
 
   .auth-shell {

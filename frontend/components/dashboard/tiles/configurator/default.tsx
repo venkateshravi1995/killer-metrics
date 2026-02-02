@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { LoadingDots } from "@/components/ui/loading-indicator"
 import {
   Select,
   SelectContent,
@@ -128,7 +129,12 @@ export function DefaultTileConfigurator<TConfig extends TileConfig = TileConfig>
   const hasAvailability = Boolean(minAvailable && maxAvailable)
   const availabilityLabel = (() => {
     if (availabilityStatus === "loading") {
-      return "Loading availability..."
+      return (
+        <span className="inline-flex items-center gap-2">
+          <LoadingDots size="xs" className="text-muted-foreground" />
+          Loading availability...
+        </span>
+      )
     }
     if (availabilityStatus === "error") {
       return availabilityError ?? "Failed to load availability."
@@ -852,7 +858,10 @@ export function DefaultTileConfigurator<TConfig extends TileConfig = TileConfig>
                     <DropdownMenuContent align="start" className="w-64">
                       {dimensionValuesStatus[filter.dimension] === "loading" ? (
                         <DropdownMenuItem disabled>
-                          Loading values...
+                          <span className="flex items-center gap-2 text-xs text-muted-foreground">
+                            <LoadingDots size="xs" className="text-muted-foreground" />
+                            Loading values...
+                          </span>
                         </DropdownMenuItem>
                       ) : (dimensionValues[filter.dimension] ?? []).length ? (
                         (dimensionValues[filter.dimension] ?? []).map((item) => {

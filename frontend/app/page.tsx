@@ -2,6 +2,7 @@ import { Suspense } from "react"
 import { redirect } from "next/navigation"
 
 import DashboardBuilder from "@/components/dashboard/builder"
+import { DashboardLoading } from "@/components/dashboard/builder/loading"
 import {
   fetchDashboard,
   fetchDashboards,
@@ -51,7 +52,7 @@ async function DashboardBootstrap() {
 
 export default function Home() {
   return (
-    <Suspense fallback={<div className="app-shell flex min-h-screen flex-col" />}>
+    <Suspense fallback={<DashboardLoading />}>
       <DashboardBootstrap />
     </Suspense>
   )

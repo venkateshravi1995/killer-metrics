@@ -1,3 +1,5 @@
+import { cache } from "react"
+
 function isLikelyJwt(token: string | null | undefined) {
   return typeof token === "string" && token.split(".").length >= 3
 }
@@ -85,6 +87,8 @@ async function resolveServerToken() {
   return isLikelyJwt(sessionToken) ? sessionToken : null
 }
 
+const getServerTokenCached = cache(async () => resolveServerToken())
+
 async function resolveClientToken(forceRefresh = false) {
   if (!forceRefresh) {
     const cached = getCachedClientToken()
@@ -132,7 +136,10 @@ async function resolveClientToken(forceRefresh = false) {
 
 export async function getNeonAuthToken(options?: { forceRefresh?: boolean }) {
   if (typeof window === "undefined") {
-    return resolveServerToken()
+    if (options?.forceRefresh) {
+      return resolveServerToken()
+    }
+    return getServerTokenCached()
   }
   const token = await resolveClientToken(Boolean(options?.forceRefresh))
   if (!token && !options?.forceRefresh) {
