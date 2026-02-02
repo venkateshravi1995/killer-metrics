@@ -1,4 +1,5 @@
 import type {
+  DashboardBreakpoint,
   DimensionKey,
   Filter,
   Grain,
@@ -15,6 +16,7 @@ export type BaseTileConfig<TVisuals = Record<string, unknown>> = {
   metricKeys: MetricKey[]
   vizType: VizType
   layout: TileLayout
+  layouts?: Partial<Record<DashboardBreakpoint, TileLayout>>
   apiBaseUrl: string
   grain: Grain
   startTime: string

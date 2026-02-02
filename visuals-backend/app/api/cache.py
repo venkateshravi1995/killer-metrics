@@ -80,7 +80,7 @@ async def cached_json(
     if cached is not None:
         if response is not None:
             response.headers["X-Cache"] = "HIT"
-        return cast(T, cached)
+        return cast("T", cached)
     result = await fetcher()
     await cache_set_json(key, result, ttl_seconds)
     if response is not None:

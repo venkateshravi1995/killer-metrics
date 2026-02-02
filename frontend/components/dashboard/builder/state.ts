@@ -45,6 +45,37 @@ import {
   type BreakpointKey,
 } from "./utils"
 
+const isSameLayout = (left: TileConfig["layout"], right: TileConfig["layout"]) =>
+  left.x === right.x && left.y === right.y && left.w === right.w && left.h === right.h
+
+const syncLayoutForBreakpoint = (
+  tiles: TileConfig[],
+  breakpoint: BreakpointKey
+) =>
+  tiles.map((tile) => {
+    const layouts = tile.layouts ?? {}
+    const current = layouts[breakpoint]
+    if (current && isSameLayout(current, tile.layout)) {
+      return tile
+    }
+    return {
+      ...tile,
+      layouts: { ...layouts, [breakpoint]: tile.layout },
+    }
+  })
+
+const applyLayoutsFromBreakpoint = (
+  tiles: TileConfig[],
+  breakpoint: BreakpointKey
+) =>
+  tiles.map((tile) => {
+    const candidate = tile.layouts?.[breakpoint]
+    if (!candidate || isSameLayout(candidate, tile.layout)) {
+      return tile
+    }
+    return { ...tile, layout: candidate }
+  })
+
 export type CatalogStatus = "loading" | "ready" | "error"
 export type DashboardStatus = "idle" | "loading" | "saving" | "error"
 export type DraftStatus = "idle" | "saving"
@@ -62,6 +93,10 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
     ? extractTilesFromConfig(initialData.activeDashboard.config)
         .map((tile) => normalizeTileConfig(tile))
         .map((tile) => applyMinSize(tile, gridCols.lg))
+        .map((tile) => ({
+          ...tile,
+          layouts: { ...(tile.layouts ?? {}), lg: tile.layout },
+        }))
     : []
   const [tiles, setTiles] = useState<TileConfig[]>(initialTiles)
   const [selectedTileId, setSelectedTileId] = useState<string | null>(
@@ -137,7 +172,10 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
   const initialDataRef = useRef(initialData)
   const draftQueueRef = useRef<Map<string, Promise<void>>>(new Map())
   const layoutDebounceRef = useRef<number | null>(null)
-  const pendingLayoutTilesRef = useRef<TileConfig[] | null>(null)
+  const pendingLayoutTilesRef = useRef<{
+    tiles: TileConfig[]
+    breakpoint: BreakpointKey
+  } | null>(null)
   const metadataDebounceRef = useRef<number | null>(null)
 
   useEffect(() => {
@@ -160,6 +198,10 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
 
   useEffect(() => {
     activeBreakpointRef.current = activeBreakpoint
+  }, [activeBreakpoint])
+
+  useEffect(() => {
+    setTiles((prev) => applyLayoutsFromBreakpoint(prev, activeBreakpoint))
   }, [activeBreakpoint])
 
   useEffect(() => {
@@ -202,7 +244,9 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
   const applyDashboardTiles = useCallback(
     (nextTiles: TileConfig[]) => {
       const cols = resolveLayoutCols(activeBreakpointRef.current)
-      setTiles(nextTiles.map((tile) => applyMinSize(tile, cols)))
+      const aligned = applyLayoutsFromBreakpoint(nextTiles, activeBreakpointRef.current)
+      const sized = aligned.map((tile) => applyMinSize(tile, cols))
+      setTiles(syncLayoutForBreakpoint(sized, activeBreakpointRef.current))
     },
     [resolveLayoutCols]
   )
@@ -289,9 +333,10 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
   )
 
   const persistLayout = useCallback(
-    (dashboardId: string, nextTiles: TileConfig[]) => {
+    (dashboardId: string, nextTiles: TileConfig[], breakpoint: BreakpointKey) => {
       return persistDraftChange(dashboardId, async () => {
         await updateDraftLayout(dashboardApiBaseUrl, dashboardId, {
+          breakpoint,
           items: nextTiles.map((tile) => ({ id: tile.id, layout: tile.layout })),
         })
       })
@@ -321,7 +366,7 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
       if (!pending) {
         return
       }
-      await persistLayout(dashboardId, pending)
+      await persistLayout(dashboardId, pending.tiles, pending.breakpoint)
     },
     [persistLayout]
   )
@@ -372,8 +417,8 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
   )
 
   const scheduleLayoutPersist = useCallback(
-    (dashboardId: string, nextTiles: TileConfig[]) => {
-      pendingLayoutTilesRef.current = nextTiles
+    (dashboardId: string, nextTiles: TileConfig[], breakpoint: BreakpointKey) => {
+      pendingLayoutTilesRef.current = { tiles: nextTiles, breakpoint }
       if (layoutDebounceRef.current !== null) {
         clearTimeout(layoutDebounceRef.current)
       }
@@ -383,7 +428,7 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
         if (!pending) {
           return
         }
-        void persistLayout(dashboardId, pending)
+        void persistLayout(dashboardId, pending.tiles, pending.breakpoint)
         pendingLayoutTilesRef.current = null
       }, 350)
     },
@@ -548,11 +593,15 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
       return
     }
     setTiles((prev) => {
+      const breakpoint = activeBreakpointRef.current
       if (prev.length === 0) {
-        return seedTiles(metrics, resolveLayoutCols(activeBreakpoint))
+        return syncLayoutForBreakpoint(
+          seedTiles(metrics, resolveLayoutCols(breakpoint)),
+          breakpoint
+        )
       }
       const firstMetricKey = metrics[0]?.key ?? ""
-      return prev.map((tile) => {
+      const nextTiles = prev.map((tile) => {
         let next = tile
         const definition = getTileDefinition(tile.vizType)
         const resolvedMetricKeys = tile.metricKeys?.length
@@ -579,17 +628,17 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
           next = { ...next, metricKeys, groupBy: resolvedGroupBy }
         }
         if (next !== tile) {
-          return applyMinSize(next, resolveLayoutCols(activeBreakpoint))
+          return applyMinSize(next, resolveLayoutCols(breakpoint))
         }
         return next
       })
+      return syncLayoutForBreakpoint(nextTiles, breakpoint)
     })
   }, [
     metrics,
     dimensions,
     metricsByKey,
     dimensionsByKey,
-    activeBreakpoint,
     resolveLayoutCols,
   ])
 
@@ -692,40 +741,42 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
       { x: 0, y: Infinity, w: 6, h: 5 },
       createId("tile")
     )
-    const cols = resolveLayoutCols(activeBreakpoint)
+    const breakpoint = activeBreakpointRef.current
+    const cols = resolveLayoutCols(breakpoint)
     const sized = applyMinSize(newTile, cols)
     const nextTiles = packTiles([...tilesRef.current, sized], cols)
-    setTiles(nextTiles)
+    const synced = syncLayoutForBreakpoint(nextTiles, breakpoint)
+    setTiles(synced)
     setSelectedTileId(sized.id)
     const dashboardId = activeDashboardIdRef.current
     if (dashboardId) {
-      const createdTile =
-        nextTiles.find((tile) => tile.id === sized.id) ?? sized
+      const createdTile = synced.find((tile) => tile.id === sized.id) ?? sized
       void persistDraftChange(dashboardId, async () => {
         await createDraftTile(dashboardApiBaseUrl, dashboardId, createdTile)
       })
-      scheduleLayoutPersist(dashboardId, nextTiles)
+      scheduleLayoutPersist(dashboardId, synced, breakpoint)
     }
   }
 
   const addTileFromDraft = (tile: TileConfig) => {
-    const cols = resolveLayoutCols(activeBreakpoint)
+    const breakpoint = activeBreakpointRef.current
+    const cols = resolveLayoutCols(breakpoint)
     const seeded = {
       ...tile,
       layout: { ...tile.layout, y: Infinity },
     }
     const sized = applyMinSize(seeded, cols)
     const nextTiles = packTiles([...tilesRef.current, sized], cols)
-    setTiles(nextTiles)
+    const synced = syncLayoutForBreakpoint(nextTiles, breakpoint)
+    setTiles(synced)
     setSelectedTileId(sized.id)
     const dashboardId = activeDashboardIdRef.current
     if (dashboardId) {
-      const createdTile =
-        nextTiles.find((entry) => entry.id === sized.id) ?? sized
+      const createdTile = synced.find((entry) => entry.id === sized.id) ?? sized
       void persistDraftChange(dashboardId, async () => {
         await createDraftTile(dashboardApiBaseUrl, dashboardId, createdTile)
       })
-      scheduleLayoutPersist(dashboardId, nextTiles)
+      scheduleLayoutPersist(dashboardId, synced, breakpoint)
     }
   }
 
@@ -740,32 +791,35 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
       title: `${source.title} copy`,
       layout: { ...source.layout, y: Infinity },
     }
-    const cols = resolveLayoutCols(activeBreakpoint)
+    const breakpoint = activeBreakpointRef.current
+    const cols = resolveLayoutCols(breakpoint)
     const sized = applyMinSize(copy, cols)
     const nextTiles = packTiles([...tilesRef.current, sized], cols)
-    setTiles(nextTiles)
+    const synced = syncLayoutForBreakpoint(nextTiles, breakpoint)
+    setTiles(synced)
     setSelectedTileId(sized.id)
     const dashboardId = activeDashboardIdRef.current
     if (dashboardId) {
-      const createdTile =
-        nextTiles.find((tile) => tile.id === sized.id) ?? sized
+      const createdTile = synced.find((tile) => tile.id === sized.id) ?? sized
       void persistDraftChange(dashboardId, async () => {
         await createDraftTile(dashboardApiBaseUrl, dashboardId, createdTile)
       })
-      scheduleLayoutPersist(dashboardId, nextTiles)
+      scheduleLayoutPersist(dashboardId, synced, breakpoint)
     }
   }
 
   const removeTile = (tileId: string) => {
-    const cols = resolveLayoutCols(activeBreakpoint)
+    const breakpoint = activeBreakpointRef.current
+    const cols = resolveLayoutCols(breakpoint)
     const remaining = tilesRef.current.filter((tile) => tile.id !== tileId)
     const nextTiles = packTiles(remaining, cols)
-    setTiles(nextTiles)
+    const synced = syncLayoutForBreakpoint(nextTiles, breakpoint)
+    setTiles(synced)
     setSelectedTileId((prev) => {
       if (prev !== tileId) {
         return prev
       }
-      return nextTiles[0]?.id ?? null
+      return synced[0]?.id ?? null
     })
     setSeriesByTileId((prev) => {
       if (!prev[tileId]) {
@@ -780,12 +834,13 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
       void persistDraftChange(dashboardId, async () => {
         await deleteDraftTile(dashboardApiBaseUrl, dashboardId, tileId)
       })
-      scheduleLayoutPersist(dashboardId, nextTiles)
+      scheduleLayoutPersist(dashboardId, synced, breakpoint)
     }
   }
 
   const updateTile = (tileId: string, updates: Partial<TileConfig>) => {
-    const cols = resolveLayoutCols(activeBreakpoint)
+    const breakpoint = activeBreakpointRef.current
+    const cols = resolveLayoutCols(breakpoint)
     const source = tilesRef.current.find((tile) => tile.id === tileId)
     if (!source) {
       return
@@ -798,19 +853,21 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
       { ...source, ...updates, visuals: nextVisuals } as TileConfig,
       cols
     )
+    const syncedTile = syncLayoutForBreakpoint([nextTile], breakpoint)[0]
     setTiles((prev) =>
-      prev.map((tile) => (tile.id === tileId ? nextTile : tile))
+      prev.map((tile) => (tile.id === tileId ? syncedTile : tile))
     )
     const dashboardId = activeDashboardIdRef.current
     if (dashboardId) {
       void persistDraftChange(dashboardId, async () => {
-        await updateDraftTile(dashboardApiBaseUrl, dashboardId, tileId, nextTile)
+        await updateDraftTile(dashboardApiBaseUrl, dashboardId, tileId, syncedTile)
       })
     }
   }
 
   const commitLayout = (layout: Layout) => {
-    const cols = resolveLayoutCols(activeBreakpoint)
+    const breakpoint = activeBreakpointRef.current
+    const cols = resolveLayoutCols(breakpoint)
     const layoutById = new Map(layout.map((item) => [item.i, item]))
     const nextTiles = tilesRef.current.map((tile) => {
       const item = layoutById.get(tile.id)
@@ -834,10 +891,11 @@ export function useDashboardBuilderState(initialData?: DashboardBuilderInitialDa
         },
       }
     })
-    setTiles(nextTiles)
+    const synced = syncLayoutForBreakpoint(nextTiles, breakpoint)
+    setTiles(synced)
     const dashboardId = activeDashboardIdRef.current
     if (dashboardId) {
-      scheduleLayoutPersist(dashboardId, nextTiles)
+      scheduleLayoutPersist(dashboardId, synced, breakpoint)
     }
   }
 

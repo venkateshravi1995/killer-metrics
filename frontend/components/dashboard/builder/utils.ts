@@ -14,6 +14,8 @@ export const gridBreakpoints = { lg: 1200, md: 996, sm: 768, xs: 560, xxs: 0 }
 export const gridCols = { lg: 12, md: 10, sm: 6, xs: 1, xxs: 1 }
 export type BreakpointKey = keyof typeof gridBreakpoints
 
+type LayoutByBreakpoint = Partial<Record<BreakpointKey, TileConfig["layout"]>>
+
 let runtimeId = 0
 export function createId(prefix: string) {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
@@ -46,6 +48,54 @@ export function getTileMinSize(tile: TileConfig) {
     return definition.getMinSize(tile)
   }
   return { minW: definition.minSize.w, minH: definition.minSize.h }
+}
+
+function normalizeLayout(value: unknown): TileConfig["layout"] | null {
+  if (!value || typeof value !== "object") {
+    return null
+  }
+  const { x, y, w, h } = value as {
+    x?: unknown
+    y?: unknown
+    w?: unknown
+    h?: unknown
+  }
+  if (
+    typeof x !== "number" ||
+    typeof y !== "number" ||
+    typeof w !== "number" ||
+    typeof h !== "number"
+  ) {
+    return null
+  }
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(w) || !Number.isFinite(h)) {
+    return null
+  }
+  return { x, y, w, h }
+}
+
+function normalizeLayouts(
+  value: unknown,
+  fallback: TileConfig["layout"]
+): LayoutByBreakpoint {
+  const layouts: LayoutByBreakpoint = {}
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>
+    ;(Object.keys(gridBreakpoints) as BreakpointKey[]).forEach((key) => {
+      const layout = normalizeLayout(record[key])
+      if (layout) {
+        layouts[key] = layout
+      }
+    })
+  }
+  if (!layouts.lg) {
+    layouts.lg = fallback
+  }
+  return layouts
+}
+
+export function resolveTileLayout(tile: TileConfig, breakpoint: BreakpointKey) {
+  return tile.layouts?.[breakpoint] ?? tile.layout
 }
 
 export function applyMinSize(tile: TileConfig, cols: number) {
@@ -167,13 +217,22 @@ function normalizeVisuals(
 
 export function normalizeTileConfig(tile: TileConfig): TileConfig {
   const sanitizedTile = { ...tile }
+  const vizType = sanitizedTile.vizType ?? "line"
+  const definition = getTileDefinition(vizType)
+  const fallbackLayout =
+    normalizeLayout(sanitizedTile.layout) ?? {
+      x: 0,
+      y: 0,
+      w: definition.minSize.w,
+      h: definition.minSize.h,
+    }
+  const normalizedLayouts = normalizeLayouts(sanitizedTile.layouts, fallbackLayout)
+  const layoutForTile = normalizedLayouts.lg ?? fallbackLayout
   const metricKeys = Array.isArray(sanitizedTile.metricKeys)
     ? sanitizedTile.metricKeys
     : []
   const uniqueMetricKeys = Array.from(new Set(metricKeys))
   const groupBy = Array.isArray(sanitizedTile.groupBy) ? sanitizedTile.groupBy : []
-  const vizType = sanitizedTile.vizType ?? "line"
-  const definition = getTileDefinition(vizType)
   const allowedSources = definition.data.allowedSources ?? [definition.data.source]
   const dataSource = allowedSources.includes(sanitizedTile.dataSource)
     ? sanitizedTile.dataSource
@@ -199,7 +258,8 @@ export function normalizeTileConfig(tile: TileConfig): TileConfig {
     description: sanitizedTile.description ?? "",
     metricKeys: trimmedMetricKeys,
     vizType,
-    layout: sanitizedTile.layout,
+    layout: layoutForTile,
+    layouts: normalizedLayouts,
     apiBaseUrl: sanitizedTile.apiBaseUrl ?? tileDefaults.apiBaseUrl,
     grain: sanitizedTile.grain ?? tileDefaults.grain,
     startTime: sanitizedTile.startTime ?? tileDefaults.startTime,
@@ -237,28 +297,62 @@ export function mapDimensionDefinition(
 }
 
 export function buildLayouts(tiles: TileConfig[]) {
-  const buildForCols = (cols: number) =>
-    tiles.map((tile) => {
-      const minSize = getTileMinSize(tile)
-      const width = Math.min(Math.max(tile.layout.w, minSize.minW), cols)
-      const height = Math.max(tile.layout.h, minSize.minH)
-      const maxX = Math.max(0, cols - width)
-      const x = Math.min(tile.layout.x, maxX)
-      return {
-        i: tile.id,
-        x,
-        y: tile.layout.y,
-        w: width,
-        h: height,
-        minW: Math.min(minSize.minW, cols),
-        minH: minSize.minH,
+  const buildItem = (
+    tile: TileConfig,
+    cols: number,
+    breakpoint: BreakpointKey,
+    layoutOverride?: TileConfig["layout"]
+  ) => {
+    const baseLayout = layoutOverride ?? resolveTileLayout(tile, breakpoint)
+    const minSize = getTileMinSize(tile)
+    const width = Math.min(Math.max(baseLayout.w, minSize.minW), cols)
+    const height = Math.max(baseLayout.h, minSize.minH)
+    const maxX = Math.max(0, cols - width)
+    const x = Math.min(baseLayout.x, maxX)
+    return {
+      i: tile.id,
+      x,
+      y: baseLayout.y,
+      w: width,
+      h: height,
+      minW: Math.min(minSize.minW, cols),
+      minH: minSize.minH,
+    }
+  }
+
+  const buildForCols = (cols: number, breakpoint: BreakpointKey) =>
+    tiles.map((tile) => buildItem(tile, cols, breakpoint))
+
+  const buildPackedForCols = (cols: number, breakpoint: BreakpointKey) => {
+    const ordered = [...tiles].sort((a, b) => {
+      if (a.layout.y !== b.layout.y) {
+        return a.layout.y - b.layout.y
       }
+      if (a.layout.x !== b.layout.x) {
+        return a.layout.x - b.layout.x
+      }
+      return a.id.localeCompare(b.id)
     })
+    const packed = packTiles(
+      ordered.map((tile) => ({
+        ...tile,
+        layout: resolveTileLayout(tile, breakpoint),
+      })),
+      cols
+    )
+    return packed.map((tile) => buildItem(tile, cols, breakpoint, tile.layout))
+  }
+  const hasLayoutFor = (breakpoint: BreakpointKey) =>
+    tiles.some((tile) => tile.layouts?.[breakpoint])
   return {
-    lg: buildForCols(gridCols.lg),
-    md: buildForCols(gridCols.md),
-    sm: buildForCols(gridCols.sm),
-    xs: buildForCols(gridCols.xs),
-    xxs: buildForCols(gridCols.xxs),
+    lg: buildForCols(gridCols.lg, "lg"),
+    md: buildForCols(gridCols.md, "md"),
+    sm: buildForCols(gridCols.sm, "sm"),
+    xs: hasLayoutFor("xs")
+      ? buildForCols(gridCols.xs, "xs")
+      : buildPackedForCols(gridCols.xs, "xs"),
+    xxs: hasLayoutFor("xxs")
+      ? buildForCols(gridCols.xxs, "xxs")
+      : buildPackedForCols(gridCols.xxs, "xxs"),
   }
 }
