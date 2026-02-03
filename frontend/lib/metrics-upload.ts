@@ -1,5 +1,4 @@
 import { normalizeBaseUrl } from "@/components/dashboard/api"
-import { getNeonAuthToken } from "@/lib/neon-auth-token"
 
 export type MetricsUploadResponse = {
   rows: number
@@ -18,16 +17,9 @@ export async function uploadMetricsCsv(
   const formData = new FormData()
   formData.append("file", file)
 
-  const headers = new Headers()
-  const token = await getNeonAuthToken()
-  if (token) {
-    headers.set("Authorization", `Bearer ${token}`)
-  }
-
   const response = await fetch(`${normalizeBaseUrl(baseUrl)}/v1/metrics/upload`, {
     method: "POST",
     body: formData,
-    headers,
   })
 
   if (!response.ok) {

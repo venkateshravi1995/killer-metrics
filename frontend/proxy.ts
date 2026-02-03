@@ -1,28 +1,8 @@
-import { neonAuthMiddleware } from "@neondatabase/auth/next/server"
 import type { NextRequest } from "next/server"
 import { NextResponse } from "next/server"
 
-const authMiddleware = process.env.NEON_AUTH_BASE_URL
-  ? neonAuthMiddleware({ loginUrl: "/auth/sign-in" })
-  : null
-
-export async function proxy(request: NextRequest) {
-  if (!authMiddleware) {
-    return NextResponse.next()
-  }
-
-  try {
-    return await authMiddleware(request)
-  } catch (error) {
-    if (process.env.NODE_ENV !== "production") {
-      console.warn(
-        "Neon auth middleware failed; allowing request in development.",
-        error
-      )
-      return NextResponse.next()
-    }
-    throw error
-  }
+export async function proxy(_request: NextRequest) {
+  return NextResponse.next()
 }
 
 export const config = {

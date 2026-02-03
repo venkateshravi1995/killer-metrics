@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react"
 
-import { neonAuthClient } from "@/lib/auth"
 import { LoadingOrbit } from "@/components/ui/loading-indicator"
+import { logOutLocalAuth } from "@/lib/local-auth"
 
 type SignOutStatus = "pending" | "error"
 
@@ -15,15 +15,7 @@ export default function SignOutPage() {
     setStatus("pending")
     setErrorMessage(null)
     try {
-      const response = await neonAuthClient.signOut({
-        fetchOptions: { credentials: "include" },
-      })
-      if (response?.error) {
-        throw new Error(response.error.message || "Sign-out failed.")
-      }
-      if (response?.data && response.data.success !== true) {
-        throw new Error("Sign-out failed.")
-      }
+      logOutLocalAuth()
       window.location.replace("/auth/sign-in")
     } catch (error) {
       const message =

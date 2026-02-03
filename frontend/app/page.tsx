@@ -1,6 +1,4 @@
 import { Suspense } from "react"
-import { redirect } from "next/navigation"
-
 import DashboardBuilder from "@/components/dashboard/builder"
 import { DashboardLoading } from "@/components/dashboard/builder/loading"
 import {
@@ -15,15 +13,10 @@ import {
   mapDimensionDefinition,
   mapMetricDefinition,
 } from "@/components/dashboard/builder/utils"
-import { getNeonAuthToken } from "@/lib/neon-auth-token"
 
 export const dynamic = "force-dynamic"
 
 async function DashboardBootstrap() {
-  const token = await getNeonAuthToken()
-  if (!token) {
-    redirect("/auth/sign-in")
-  }
   const [metricsResponse, dimensionsResponse, dashboardsResponse] =
     await Promise.all([
       fetchMetrics(tileDefaults.apiBaseUrl),

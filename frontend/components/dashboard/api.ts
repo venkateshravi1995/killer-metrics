@@ -1,5 +1,3 @@
-import { getNeonAuthToken } from "@/lib/neon-auth-token"
-
 import type { DashboardBreakpoint, DashboardConfig, Filter, TileConfig } from "./types"
 
 export type TimeseriesResponse = {
@@ -163,7 +161,7 @@ function normalizeDashboardConfig(config: DashboardConfig): DashboardConfig {
 }
 
 async function fetchJson<T>(input: string, init?: RequestInit) {
-  const response = await fetch(input, await withAuthHeaders(init))
+  const response = await fetch(input, init)
   if (!response.ok) {
     const message = await response.text()
     throw new Error(message || `Request failed with status ${response.status}`)
@@ -172,21 +170,11 @@ async function fetchJson<T>(input: string, init?: RequestInit) {
 }
 
 async function fetchNoContent(input: string, init?: RequestInit) {
-  const response = await fetch(input, await withAuthHeaders(init))
+  const response = await fetch(input, init)
   if (!response.ok) {
     const message = await response.text()
     throw new Error(message || `Request failed with status ${response.status}`)
   }
-}
-
-async function withAuthHeaders(init?: RequestInit) {
-  const token = await getNeonAuthToken()
-  if (!token) {
-    return init
-  }
-  const headers = new Headers(init?.headers)
-  headers.set("Authorization", `Bearer ${token}`)
-  return { ...init, headers }
 }
 
 function buildDashboardHeaders(includeContentType = false) {
