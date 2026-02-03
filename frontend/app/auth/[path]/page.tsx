@@ -503,8 +503,8 @@ export default function AuthPage() {
       ? "Create your workspace"
       : "Welcome back"
   const subtitle = isReset
-    ? "Resetting is instant in this local demo."
-    : "No password required. Start a local session to explore."
+    ? "Resetting is instant in this demo."
+    : "No password required. Start exploring in seconds."
   const primaryLabel = isReset ? "Send reset link" : isSignUp ? "Create workspace" : "Sign in"
 
   return (
@@ -553,7 +553,7 @@ export default function AuthPage() {
           <div className={styles.authPanel}>
             <div className="auth-card space-y-5">
               <div className="flex items-center justify-between">
-                <span className="auth-card-title">Local access</span>
+                <span className="auth-card-title">Demo access</span>
                 <span className="auth-card-badge">Demo</span>
               </div>
               <div className="space-y-2">
@@ -563,7 +563,7 @@ export default function AuthPage() {
               {loggedIn ? (
                 <div className="space-y-3">
                   <div className="rounded-xl border border-slate-200/70 bg-white/70 px-4 py-3 text-xs text-slate-500">
-                    You&apos;re already signed in locally.
+                    You&apos;re already signed in on this device.
                   </div>
                   <div className="flex flex-col gap-2">
                     <Button className="w-full" size="lg" onClick={() => router.replace("/")}>
@@ -585,12 +585,12 @@ export default function AuthPage() {
                     {primaryLabel}
                   </Button>
                   <p className="text-center text-xs text-slate-500">
-                    This demo stores a local session only.
+                    Sessions are saved on this device.
                   </p>
                 </div>
               )}
               <div className="flex items-center justify-between text-xs text-slate-500">
-                <span>Local-only session</span>
+                <span>Demo mode</span>
                 {isSignUp ? (
                   <Link className="text-slate-700 hover:text-slate-900" href="/auth/sign-in">
                     Already have access? Sign in

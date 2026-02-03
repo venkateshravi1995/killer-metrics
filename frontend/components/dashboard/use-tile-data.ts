@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 
 import {
   fetchAvailability,
@@ -633,16 +633,19 @@ export function useTileData(
     isRefreshing: false,
     error: undefined,
   }))
+  const requestKeyRef = useRef(requestKey)
 
   useEffect(() => {
     let isActive = true
     const controller = new AbortController()
     const { signal } = controller
+    const isNewRequest = requestKeyRef.current !== requestKey
+    requestKeyRef.current = requestKey
     setState((prev) => ({
       status: prev.data.metrics.length ? "live" : "loading",
       data: prev.data.metrics.length ? prev.data : createEmptyData(metrics),
       lastUpdated: prev.lastUpdated ?? null,
-      isRefreshing: false,
+      isRefreshing: prev.data.metrics.length > 0 && isNewRequest,
       error: undefined,
     }))
 
