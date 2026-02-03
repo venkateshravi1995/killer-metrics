@@ -107,6 +107,7 @@ export function TileCard({
   }, [tileState.lastUpdated])
   const isLoading = tileState.status === "loading"
   const isError = tileState.status === "error"
+  const isRefreshing = tileState.isRefreshing && !isLoading && !isError
   const TileRenderer = tileDefinition.render as TileDefinition<TileConfig>["render"]
 
   useEffect(() => {
@@ -149,7 +150,7 @@ export function TileCard({
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {isError || isLoading ? (
+          {isError || isLoading || isRefreshing ? (
             <Badge
               variant={isError ? "destructive" : "outline"}
               className="rounded-full text-[10px]"
@@ -159,7 +160,7 @@ export function TileCard({
               ) : (
                 <span className="flex items-center gap-1">
                   <LoadingDots size="xs" className="text-muted-foreground" />
-                  Loading
+                  {isRefreshing ? "Updating" : "Loading"}
                 </span>
               )}
             </Badge>
@@ -242,20 +243,30 @@ export function TileCard({
             Live data unavailable.
           </div>
         ) : (
-          <TileRenderer
-            tile={tile}
-            metrics={tileData.metrics}
-            primaryMetric={metric}
-            chartData={tileData.chartData}
-            series={tileData.series}
-            xKey={tileData.xKey}
-            aggregates={tileData.aggregates}
-            groupByLabels={groupByLabels}
-            current={summary?.current ?? 0}
-            change={summary?.change ?? 0}
-            changePct={summary?.changePct ?? 0}
-            accentColor={accentColor}
-          />
+          <div className="relative h-full">
+            <TileRenderer
+              tile={tile}
+              metrics={tileData.metrics}
+              primaryMetric={metric}
+              chartData={tileData.chartData}
+              series={tileData.series}
+              xKey={tileData.xKey}
+              aggregates={tileData.aggregates}
+              groupByLabels={groupByLabels}
+              current={summary?.current ?? 0}
+              change={summary?.change ?? 0}
+              changePct={summary?.changePct ?? 0}
+              accentColor={accentColor}
+            />
+            {isRefreshing ? (
+              <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-background/65 text-xs text-muted-foreground backdrop-blur-sm">
+                <span className="flex items-center gap-2">
+                  <LoadingDots size="xs" className="text-muted-foreground" />
+                  Updating tile...
+                </span>
+              </div>
+            ) : null}
+          </div>
         )}
       </div>
       <div className="flex items-center justify-between text-xs text-muted-foreground">

@@ -1,6 +1,4 @@
-import { Suspense } from "react"
 import DashboardBuilder from "@/components/dashboard/builder"
-import { DashboardLoading } from "@/components/dashboard/builder/loading"
 import {
   fetchDashboard,
   fetchDashboards,
@@ -44,9 +42,5 @@ async function DashboardBootstrap() {
 }
 
 export default function Home() {
-  return (
-    <Suspense fallback={<DashboardLoading />}>
-      <DashboardBootstrap />
-    </Suspense>
-  )
+  return <DashboardBootstrap />
 }

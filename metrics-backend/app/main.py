@@ -40,6 +40,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="Metric Killer API", lifespan=lifespan)
 logger = logging.getLogger("metric_killer.api")
+CACHE_CONTROL_HEADER = "public, max-age=300"
 
 cors_origins = [
     origin.strip() for origin in os.getenv("CORS_ORIGINS", "*").split(",") if origin.strip()
@@ -54,6 +55,13 @@ app.add_middleware(
 
 app.include_router(health_router)
 app.include_router(v1_router)
+
+
+@app.middleware("http")
+async def attach_cache_control_header(request: Request, call_next) -> Response:
+    response = await call_next(request)
+    response.headers["Cache-Control"] = CACHE_CONTROL_HEADER
+    return response
 
 
 @app.exception_handler(DatabaseConfigError)
