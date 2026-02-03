@@ -21,7 +21,7 @@ from app.api.cache import (
     cached_json,
     get_dashboard_cache_version,
 )
-from app.core.auth import AuthContext, require_neon_auth
+from app.core.auth import AuthContext, require_local_auth
 from app.db.schema import Dashboard, DashboardTile
 from app.db.session import get_session
 from app.schemas.dashboards import (
@@ -45,7 +45,7 @@ else:
 
 router = APIRouter(prefix="/v1/dashboards", tags=["dashboards"])
 
-NEON_AUTH_DEP = Depends(require_neon_auth)
+LOCAL_AUTH_DEP = Depends(require_local_auth)
 SESSION_DEPENDENCY = Depends(get_session)
 SessionDep = Annotated[AsyncSession, SESSION_DEPENDENCY]
 
@@ -143,13 +143,13 @@ def _item_to_summary(item: Dashboard) -> DashboardSummary:
     )
 
 
-def get_client_id(auth: Annotated[AuthContext, NEON_AUTH_DEP]) -> str:
-    """Resolve the client identifier from Neon Auth."""
+def get_client_id(auth: Annotated[AuthContext, LOCAL_AUTH_DEP]) -> str:
+    """Resolve the client identifier from local auth."""
     return auth.client_id
 
 
-def get_user_id(auth: Annotated[AuthContext, NEON_AUTH_DEP]) -> str:
-    """Resolve the user identifier from Neon Auth."""
+def get_user_id(auth: Annotated[AuthContext, LOCAL_AUTH_DEP]) -> str:
+    """Resolve the user identifier from local auth."""
     return auth.user_id
 
 

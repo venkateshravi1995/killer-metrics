@@ -2,11 +2,15 @@
 
 import type { CSSProperties } from "react"
 import { memo, useCallback, useEffect, useRef, useState } from "react"
-import { AuthView } from "@neondatabase/auth/react"
 import Link from "next/link"
-import { useParams } from "next/navigation"
+import { useParams, useRouter } from "next/navigation"
 
-import { NeonAuthProvider } from "@/components/auth/neon-auth-provider"
+import { Button } from "@/components/ui/button"
+import {
+  getLocalAuthState,
+  logInLocalAuth,
+  logOutLocalAuth,
+} from "@/lib/local-auth"
 import styles from "../auth.module.css"
 
 type ChartType =
@@ -348,6 +352,7 @@ TileCard.displayName = "TileCard"
 
 export default function AuthPage() {
   const params = useParams<{ path?: string | string[] }>()
+  const router = useRouter()
   const paramValue = params?.path
   const authPath =
     typeof paramValue === "string"
@@ -355,12 +360,15 @@ export default function AuthPage() {
       : Array.isArray(paramValue)
         ? paramValue[0]
         : "sign-in"
+  const isSignUp = authPath === "sign-up" || authPath === "register"
+  const isReset = authPath === "reset-password" || authPath === "forgot-password"
 
   const [mounted, setMounted] = useState(false)
   const [tiles, setTiles] = useState<Tile[]>([])
   const [columns, setColumns] = useState(6)
   const [repeatCount, setRepeatCount] = useState(2)
   const [visibleIds, setVisibleIds] = useState<Set<string>>(() => new Set())
+  const [authState, setAuthState] = useState(() => getLocalAuthState())
   const observerRef = useRef<IntersectionObserver | null>(null)
   const visibleCounts = useRef(new Map<string, number>())
   const updateCursorRef = useRef(0)
@@ -370,6 +378,7 @@ export default function AuthPage() {
 
   useEffect(() => {
     setMounted(true)
+    setAuthState(getLocalAuthState())
     const seed = Math.floor(Date.now() / 1000)
     const rand = mulberry32(seed)
     const nav = navigator as Navigator & { deviceMemory?: number }
@@ -476,56 +485,126 @@ export default function AuthPage() {
     return () => clearInterval(interval)
   }, [mounted, visibleIds])
 
+  const handleLocalLogin = useCallback(() => {
+    logInLocalAuth()
+    setAuthState(getLocalAuthState())
+    router.replace("/")
+  }, [router])
+
+  const handleLocalLogout = useCallback(() => {
+    logOutLocalAuth()
+    setAuthState(getLocalAuthState())
+  }, [])
+
+  const loggedIn = Boolean(authState?.loggedIn)
+  const title = isReset
+    ? "Recover access"
+    : isSignUp
+      ? "Create your workspace"
+      : "Welcome back"
+  const subtitle = isReset
+    ? "Resetting is instant in this local demo."
+    : "No password required. Start a local session to explore."
+  const primaryLabel = isReset ? "Send reset link" : isSignUp ? "Create workspace" : "Sign in"
+
   return (
-    <NeonAuthProvider>
-      <div className={styles.shell}>
-        <div className={styles.topbar}>
-          <span className={styles.topbarTitle}>Venky&apos;s Killer Metrics</span>
-          <div className="flex items-center gap-4">
-            <Link className={styles.topbarLink} href="/">
-              Back to dashboard
-            </Link>
-            <a
-              className={styles.topbarLink}
-              href="https://www.linkedin.com/in/veravi/"
-              target="_blank"
-              rel="noreferrer"
-            >
-              About me
-            </a>
-          </div>
+    <div className={styles.shell}>
+      <div className={styles.topbar}>
+        <span className={styles.topbarTitle}>Venky&apos;s Killer Metrics</span>
+        <div className="flex items-center gap-4">
+          <Link className={styles.topbarLink} href="/">
+            Back to dashboard
+          </Link>
+          <a
+            className={styles.topbarLink}
+            href="https://www.linkedin.com/in/veravi/"
+            target="_blank"
+            rel="noreferrer"
+          >
+            About me
+          </a>
         </div>
-        {mounted ? (
-          <div className={styles.backdrop} aria-hidden="true">
-            <div className={styles.aurora} />
-            <div className={styles.grid} />
-            <div className={styles.scroll} style={{ "--columns": columns } as CSSProperties}>
-              <div className={styles.track}>
-                {Array.from({ length: repeatCount }).map((_, iteration) => (
-                  <div className={styles.metrics} key={`grid-${iteration}`}>
-                    {tiles.map((tile) => (
-                      <TileCard
-                        key={`${tile.id}-${iteration}`}
-                        tile={tile}
-                        iteration={iteration}
-                        registerTile={registerTile}
-                        isVisible={visibleIds.has(tile.id)}
-                      />
-                    ))}
-                  </div>
-                ))}
-              </div>
+      </div>
+      {mounted ? (
+        <div className={styles.backdrop} aria-hidden="true">
+          <div className={styles.aurora} />
+          <div className={styles.grid} />
+          <div className={styles.scroll} style={{ "--columns": columns } as CSSProperties}>
+            <div className={styles.track}>
+              {Array.from({ length: repeatCount }).map((_, iteration) => (
+                <div className={styles.metrics} key={`grid-${iteration}`}>
+                  {tiles.map((tile) => (
+                    <TileCard
+                      key={`${tile.id}-${iteration}`}
+                      tile={tile}
+                      iteration={iteration}
+                      registerTile={registerTile}
+                      isVisible={visibleIds.has(tile.id)}
+                    />
+                  ))}
+                </div>
+              ))}
             </div>
           </div>
-        ) : null}
-        <div className={styles.overlay}>
-          <div className={styles.cardWrap}>
-            <div className={styles.authPanel}>
-              <AuthView path={authPath} redirectTo="/" />
+        </div>
+      ) : null}
+      <div className={styles.overlay}>
+        <div className={styles.cardWrap}>
+          <div className={styles.authPanel}>
+            <div className="auth-card space-y-5">
+              <div className="flex items-center justify-between">
+                <span className="auth-card-title">Local access</span>
+                <span className="auth-card-badge">Demo</span>
+              </div>
+              <div className="space-y-2">
+                <h1 className="text-2xl font-semibold text-slate-900">{title}</h1>
+                <p className="text-sm text-slate-500">{subtitle}</p>
+              </div>
+              {loggedIn ? (
+                <div className="space-y-3">
+                  <div className="rounded-xl border border-slate-200/70 bg-white/70 px-4 py-3 text-xs text-slate-500">
+                    You&apos;re already signed in locally.
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <Button className="w-full" size="lg" onClick={() => router.replace("/")}>
+                      Continue to dashboard
+                    </Button>
+                    <Button
+                      className="w-full"
+                      size="lg"
+                      variant="outline"
+                      onClick={handleLocalLogout}
+                    >
+                      Log out locally
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <Button className="w-full" size="lg" onClick={handleLocalLogin}>
+                    {primaryLabel}
+                  </Button>
+                  <p className="text-center text-xs text-slate-500">
+                    This demo stores a local session only.
+                  </p>
+                </div>
+              )}
+              <div className="flex items-center justify-between text-xs text-slate-500">
+                <span>Local-only session</span>
+                {isSignUp ? (
+                  <Link className="text-slate-700 hover:text-slate-900" href="/auth/sign-in">
+                    Already have access? Sign in
+                  </Link>
+                ) : (
+                  <Link className="text-slate-700 hover:text-slate-900" href="/auth/sign-up">
+                    Need access? Create workspace
+                  </Link>
+                )}
+              </div>
             </div>
           </div>
         </div>
       </div>
-    </NeonAuthProvider>
+    </div>
   )
 }
